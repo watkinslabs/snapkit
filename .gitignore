@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+*.zip
+*.shell-extension.zip
+
+# Compiled schemas
+schemas/gschemas.compiled
+*/schemas/gschemas.compiled
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
