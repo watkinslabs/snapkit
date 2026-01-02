@@ -1,6 +1,6 @@
 # SnapKit GNOME Extension Makefile
 
-EXTENSION_UUID = snapkit@cwatkins
+EXTENSION_UUID = snapkit@watkinslabs
 EXTENSION_DIR = $(EXTENSION_UUID)
 INSTALL_DIR = ~/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 BUILD_DIR = build
