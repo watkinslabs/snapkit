@@ -1,0 +1,55 @@
+/* SnapKit Extension Styles */
+
+/* Main overlay - full screen backdrop */
+.snapkit-overlay {
+    /* background-color set via JavaScript from settings */
+    transition-duration: 200ms;
+}
+
+/* Container holding all layout previews */
+.snapkit-layout-container {
+    spacing: 24px;
+    padding: 0px;
+}
+
+/* Individual layout preview card */
+.snapkit-layout-item {
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    background-color: rgba(40, 40, 40, 0.9);
+    padding: 8px;
+    transition-duration: 150ms;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Layout card hover effect */
+.snapkit-layout-item:hover {
+    border-color: rgba(53, 132, 228, 0.9);
+    background-color: rgba(50, 50, 50, 0.95);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+}
+
+/* Individual zone within a layout */
+.snapkit-zone {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background-color: rgba(80, 80, 80, 0.5);
+    border-radius: 4px;
+    transition-duration: 100ms;
+}
+
+/* Zone hover effect - highlight the specific zone */
+.snapkit-zone:hover {
+    background-color: rgba(53, 132, 228, 0.7);
+    border-color: rgba(53, 132, 228, 1.0);
+    border-width: 2px;
+}
+
+/* Layout name label */
+.snapkit-layout-name {
+    font-size: 11pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    text-align: center;
+}

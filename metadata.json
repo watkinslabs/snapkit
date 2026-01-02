@@ -1,0 +1,15 @@
+{
+  "name": "SnapKit",
+  "description": "Windows 11-style snap layout grid for window tiling. Drag windows to the top edge to see available layouts.",
+  "uuid": "snapkit@cwatkins",
+  "shell-version": [
+    "45",
+    "46",
+    "47"
+  ],
+  "version": 1,
+  "url": "https://github.com/cwatkins/snapkit",
+  "settings-schema": "org.gnome.shell.extensions.snapkit",
+  "author": "Chris Watkins (co-authored by Claude)",
+  "email": "Chris@watkinslabs.com"
+}

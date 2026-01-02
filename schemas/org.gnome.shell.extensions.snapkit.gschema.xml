@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.snapkit" path="/org/gnome/shell/extensions/snapkit/">
+
+    <!-- Appearance Settings -->
+    <key name="overlay-background-type" type="s">
+      <default>'solid'</default>
+      <summary>Background type</summary>
+      <description>Type of background: solid, gradient-vertical, gradient-horizontal, gradient-radial</description>
+    </key>
+
+    <key name="overlay-background-color" type="s">
+      <default>'rgba(0, 0, 0, 0.8)'</default>
+      <summary>Overlay background color</summary>
+      <description>RGBA color for the overlay background (or gradient start color)</description>
+    </key>
+
+    <key name="overlay-background-color-end" type="s">
+      <default>'rgba(20, 20, 20, 0.8)'</default>
+      <summary>Overlay background end color</summary>
+      <description>RGBA end color for gradient backgrounds</description>
+    </key>
+
+    <key name="overlay-grid-color" type="s">
+      <default>'rgba(255, 255, 255, 0.3)'</default>
+      <summary>Grid border color</summary>
+      <description>RGBA color for layout grid borders</description>
+    </key>
+
+    <key name="layout-card-background" type="s">
+      <default>'rgba(40, 40, 40, 0.9)'</default>
+      <summary>Layout card background</summary>
+      <description>Background color for layout preview cards</description>
+    </key>
+
+    <key name="layout-card-border" type="s">
+      <default>'rgba(255, 255, 255, 0.2)'</default>
+      <summary>Layout card border</summary>
+      <description>Border color for layout preview cards</description>
+    </key>
+
+    <key name="zone-background" type="s">
+      <default>'rgba(80, 80, 80, 0.5)'</default>
+      <summary>Zone background</summary>
+      <description>Background color for zones in layout previews</description>
+    </key>
+
+    <key name="zone-border" type="s">
+      <default>'rgba(255, 255, 255, 0.15)'</default>
+      <summary>Zone border</summary>
+      <description>Border color for zones in layout previews</description>
+    </key>
+
+    <key name="overlay-highlight-color" type="s">
+      <default>'rgba(53, 132, 228, 0.6)'</default>
+      <summary>Highlight color</summary>
+      <description>RGBA color for zone highlight on hover</description>
+    </key>
+
+    <key name="overlay-opacity" type="d">
+      <default>0.95</default>
+      <range min="0.0" max="1.0"/>
+      <summary>Overlay opacity</summary>
+      <description>Overall opacity of the overlay (0.0 - 1.0)</description>
+    </key>
+
+    <!-- Trigger/Hitbox Settings -->
+    <key name="hitbox-background-color" type="s">
+      <default>'rgba(100, 100, 100, 0.5)'</default>
+      <summary>Hitbox background color</summary>
+      <description>RGBA color for the trigger/hitbox indicator when closed</description>
+    </key>
+
+    <!-- Behavior Settings -->
+    <key name="trigger-zone-height" type="i">
+      <default>10</default>
+      <range min="1" max="100"/>
+      <summary>Trigger zone height</summary>
+      <description>Height in pixels of the edge trigger zone</description>
+    </key>
+
+    <key name="overlay-strip-size" type="i">
+      <default>180</default>
+      <range min="100" max="400"/>
+      <summary>Overlay strip size</summary>
+      <description>Height/width in pixels of the overlay strip when open</description>
+    </key>
+
+    <key name="overlay-scale" type="d">
+      <default>1.0</default>
+      <range min="0.5" max="2.0"/>
+      <summary>Overlay scale</summary>
+      <description>Scale factor for overlay size (0.5-2.0)</description>
+    </key>
+
+    <key name="layout-spacing" type="i">
+      <default>24</default>
+      <range min="0" max="100"/>
+      <summary>Layout spacing</summary>
+      <description>Spacing in pixels between layout cards</description>
+    </key>
+
+    <key name="trigger-edge" type="s">
+      <default>'top'</default>
+      <summary>Trigger edge</summary>
+      <description>Which screen edge triggers the overlay: top, left, right, or bottom</description>
+    </key>
+
+    <key name="monitor-mode" type="s">
+      <default>'primary'</default>
+      <summary>Monitor mode</summary>
+      <description>Which monitor(s) to show overlay on: primary, all, or current</description>
+    </key>
+
+    <key name="auto-hide-enabled" type="b">
+      <default>true</default>
+      <summary>Enable auto-hide</summary>
+      <description>Automatically hide overlay when mouse leaves</description>
+    </key>
+
+    <key name="push-time" type="i">
+      <default>300</default>
+      <range min="0" max="2000"/>
+      <summary>Push time</summary>
+      <description>Time in milliseconds to hover in trigger zone before opening overlay</description>
+    </key>
+
+    <key name="animation-duration" type="i">
+      <default>200</default>
+      <range min="0" max="1000"/>
+      <summary>Animation duration</summary>
+      <description>Duration of fade animations in milliseconds</description>
+    </key>
+
+    <key name="disable-native-edge-tiling" type="b">
+      <default>false</default>
+      <summary>Disable native GNOME edge tiling</summary>
+      <description>Disable GNOME's built-in edge tiling feature to prevent conflicts</description>
+    </key>
+
+    <key name="debug-mode" type="b">
+      <default>false</default>
+      <summary>Enable debug mode</summary>
+      <description>Enable verbose logging for troubleshooting</description>
+    </key>
+
+    <key name="show-layout-names" type="b">
+      <default>true</default>
+      <summary>Show layout names</summary>
+      <description>Show layout names above tile previews</description>
+    </key>
+
+    <!-- SNAP MODE Settings -->
+    <key name="snap-mode-timeout" type="i">
+      <default>60</default>
+      <range min="10" max="300"/>
+      <summary>SNAP MODE timeout</summary>
+      <description>Seconds before automatically exiting SNAP MODE (10-300)</description>
+    </key>
+
+    <key name="max-window-thumbnails" type="i">
+      <default>12</default>
+      <range min="4" max="20"/>
+      <summary>Max window thumbnails</summary>
+      <description>Maximum number of windows to show in SNAP MODE selector (4-20)</description>
+    </key>
+
+    <!-- Performance Settings -->
+    <key name="motion-throttle-interval" type="i">
+      <default>16</default>
+      <range min="8" max="100"/>
+      <summary>Motion event throttle</summary>
+      <description>Minimum milliseconds between motion event processing (lower = more responsive, higher = better performance)</description>
+    </key>
+
+    <!-- Layout Settings -->
+    <key name="enabled-layouts" type="as">
+      <default>['half-split', 'quarters', 'thirds-vertical', 'thirds-horizontal', 'left-focus', 'right-focus']</default>
+      <summary>Enabled layouts</summary>
+      <description>Array of layout IDs to display</description>
+    </key>
+
+    <key name="custom-layouts" type="s">
+      <default>'[]'</default>
+      <summary>Custom layouts</summary>
+      <description>JSON array of custom layout definitions</description>
+    </key>
+
+  </schema>
+</schemalist>
