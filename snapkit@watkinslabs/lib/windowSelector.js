@@ -12,10 +12,12 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 export const WindowSelector = GObject.registerClass({
     Signals: {
         'window-selected': {param_types: [Meta.Window.$gtype]},
+        'window-deselected': {param_types: [Meta.Window.$gtype]},
+        'skip-zone': {},
         'cancelled': {}
     }
 }, class WindowSelector extends St.Widget {
-    _init(settings) {
+    _init(settings, positionedWindows = null) {
         super._init({
             reactive: true,
             can_focus: true,
@@ -26,6 +28,7 @@ export const WindowSelector = GObject.registerClass({
         this._windowButtons = [];
         this._signalIds = [];  // Track signal IDs for cleanup
         this._windowDestroyIds = new Map();  // Track window destroy handlers
+        this._positionedWindows = positionedWindows || new Set();  // Track which windows are already positioned
 
         // Add to chrome and position fullscreen
         Main.layoutManager.addChrome(this);
@@ -122,11 +125,56 @@ export const WindowSelector = GObject.registerClass({
 
         // Subtitle instruction
         const subtitle = new St.Label({
-            text: 'Click a window or press ESC to cancel',
+            text: 'Click a window, Skip this zone, or press ESC to cancel',
             style_class: 'window-selector-subtitle'
         });
-        subtitle.set_style('font-size: 14pt; color: rgba(255, 255, 255, 0.7); margin-top: 32px;');
+        subtitle.set_style('font-size: 14pt; color: rgba(255, 255, 255, 0.7); margin-top: 20px;');
         container.add_child(subtitle);
+
+        // Skip button
+        const skipButton = new St.Button({
+            label: 'Skip This Zone',
+            style_class: 'window-selector-skip-button',
+            reactive: true,
+            can_focus: true,
+            track_hover: true
+        });
+        skipButton.set_style(`
+            background-color: rgba(230, 126, 34, 0.8);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 8px;
+            padding: 12px 24px;
+            margin-top: 12px;
+            font-size: 14pt;
+            color: white;
+        `);
+        skipButton.connect('clicked', () => {
+            this._debug('Skip zone clicked');
+            this.emit('skip-zone');
+        });
+        skipButton.connect('enter-event', () => {
+            skipButton.set_style(`
+                background-color: rgba(230, 126, 34, 1.0);
+                border: 2px solid rgba(255, 255, 255, 0.6);
+                border-radius: 8px;
+                padding: 12px 24px;
+                margin-top: 12px;
+                font-size: 14pt;
+                color: white;
+            `);
+        });
+        skipButton.connect('leave-event', () => {
+            skipButton.set_style(`
+                background-color: rgba(230, 126, 34, 0.8);
+                border: 2px solid rgba(255, 255, 255, 0.4);
+                border-radius: 8px;
+                padding: 12px 24px;
+                margin-top: 12px;
+                font-size: 14pt;
+                color: white;
+            `);
+        });
+        container.add_child(skipButton);
     }
 
     _populateWindows() {
@@ -205,15 +253,29 @@ export const WindowSelector = GObject.registerClass({
         button._signalIds = [];
         button._window = window;  // Store window reference
 
-        button.set_style(`
-            background-color: rgba(40, 40, 40, 0.95);
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            border-radius: 8px;
-            padding: 12px;
-            margin: 8px;
-            width: 240px;
-            height: 180px;
-        `);
+        // Check if window is already positioned
+        const isPositioned = this._positionedWindows.has(window);
+
+        // Base style depends on positioned state
+        const baseStyle = isPositioned
+            ? `background-color: rgba(38, 162, 105, 0.6);
+               border: 3px solid rgba(255, 255, 255, 0.5);
+               border-radius: 8px;
+               padding: 12px;
+               margin: 8px;
+               width: 240px;
+               height: 180px;`
+            : `background-color: rgba(40, 40, 40, 0.95);
+               border: 2px solid rgba(255, 255, 255, 0.2);
+               border-radius: 8px;
+               padding: 12px;
+               margin: 8px;
+               width: 240px;
+               height: 180px;`;
+
+        button.set_style(baseStyle);
+        button._baseStyle = baseStyle;
+        button._isPositioned = isPositioned;
 
         const box = new St.BoxLayout({
             vertical: true,
@@ -221,6 +283,24 @@ export const WindowSelector = GObject.registerClass({
             y_align: Clutter.ActorAlign.CENTER
         });
         button.set_child(box);
+
+        // Positioned indicator overlay (checkmark icon)
+        if (isPositioned) {
+            const positionedIndicator = new St.Label({
+                text: '✓ POSITIONED',
+                style_class: 'positioned-indicator'
+            });
+            positionedIndicator.set_style(`
+                font-size: 10pt;
+                color: rgba(255, 255, 255, 0.9);
+                background-color: rgba(38, 162, 105, 0.9);
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-weight: bold;
+                margin-bottom: 4px;
+            `);
+            box.add_child(positionedIndicator);
+        }
 
         // Window thumbnail
         const clone = this._createWindowThumbnail(window);
@@ -261,33 +341,42 @@ export const WindowSelector = GObject.registerClass({
 
         // Handle hover
         button._signalIds.push(button.connect('enter-event', () => {
-            button.set_style(`
-                background-color: rgba(53, 132, 228, 0.6);
-                border: 2px solid rgba(255, 255, 255, 0.6);
-                border-radius: 8px;
-                padding: 12px;
-                margin: 8px;
-                width: 240px;
-                height: 180px;
-            `);
+            if (isPositioned) {
+                button.set_style(`
+                    background-color: rgba(192, 97, 203, 0.6);
+                    border: 3px solid rgba(255, 255, 255, 0.7);
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 8px;
+                    width: 240px;
+                    height: 180px;
+                `);
+            } else {
+                button.set_style(`
+                    background-color: rgba(53, 132, 228, 0.6);
+                    border: 2px solid rgba(255, 255, 255, 0.6);
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 8px;
+                    width: 240px;
+                    height: 180px;
+                `);
+            }
         }));
 
         button._signalIds.push(button.connect('leave-event', () => {
-            button.set_style(`
-                background-color: rgba(40, 40, 40, 0.95);
-                border: 2px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 12px;
-                margin: 8px;
-                width: 240px;
-                height: 180px;
-            `);
+            button.set_style(button._baseStyle);
         }));
 
         // Handle click
         button._signalIds.push(button.connect('clicked', () => {
-            this._debug(`Window selected: ${window.get_title()}`);
-            this.emit('window-selected', window);
+            if (isPositioned) {
+                this._debug(`Removing positioned window: ${window.get_title()}`);
+                this.emit('window-deselected', window);
+            } else {
+                this._debug(`Window selected: ${window.get_title()}`);
+                this.emit('window-selected', window);
+            }
         }));
 
         return button;

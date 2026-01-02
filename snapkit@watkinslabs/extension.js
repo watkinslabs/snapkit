@@ -13,6 +13,7 @@ import {LayoutManager} from './lib/layoutManager.js';
 import {LayoutOverlay} from './lib/overlayUI.js';
 import {SnapHandler} from './lib/snapHandler.js';
 import {WindowSelector} from './lib/windowSelector.js';
+import {ZonePositioningOverlay} from './lib/zonePositioningOverlay.js';
 
 // Overlay states
 const OverlayState = {
@@ -46,6 +47,8 @@ export default class SnapKitExtension extends Extension {
         this._snapModeCurrentIndex = 0;   // Current zone index
         this._snapModeMonitor = null;     // Monitor where overlay was shown
         this._windowSelector = null;      // Window selector overlay
+        this._zonePositioningOverlay = null;  // Zone positioning visual overlay
+        this._positionedWindows = new Set();  // Set of windows already positioned
         this._snapModeTimeoutId = null;   // Timeout to auto-exit SNAP MODE
     }
 
@@ -215,6 +218,12 @@ export default class SnapKitExtension extends Extension {
         if (this._windowSelector) {
             this._windowSelector.destroy();
             this._windowSelector = null;
+        }
+
+        // Destroy zone positioning overlay if exists
+        if (this._zonePositioningOverlay) {
+            this._zonePositioningOverlay.destroy();
+            this._zonePositioningOverlay = null;
         }
 
         if (this._snapHandler) {
@@ -680,6 +689,7 @@ export default class SnapKitExtension extends Extension {
             this._snapModeLayout = layout;
             this._snapModeZones = layout.zones;
             this._snapModeMonitor = Main.layoutManager.monitors[monitorIndex];
+            this._positionedWindows.clear(); // Clear any previously positioned windows
 
             // Find index of clicked zone
             this._snapModeCurrentIndex = layout.zones.findIndex(z => z === zone);
@@ -738,13 +748,32 @@ export default class SnapKitExtension extends Extension {
             );
             this._debug(`SNAP MODE timeout set for ${timeoutSeconds} seconds`);
 
+            // Create zone positioning overlay if not exists
+            if (!this._zonePositioningOverlay) {
+                this._zonePositioningOverlay = new ZonePositioningOverlay(
+                    this._snapModeLayout,
+                    this._snapModeCurrentIndex,
+                    this._settings
+                );
+            }
+
             // Create window selector if not exists
             if (!this._windowSelector) {
-                this._windowSelector = new WindowSelector(this._settings);
+                this._windowSelector = new WindowSelector(this._settings, this._positionedWindows);
 
                 // Connect to window selection
                 this._windowSelector.connect('window-selected', (selector, window) => {
                     this._onWindowSelected(window);
+                });
+
+                // Connect to window deselection
+                this._windowSelector.connect('window-deselected', (selector, window) => {
+                    this._onWindowDeselected(window);
+                });
+
+                // Connect to skip zone
+                this._windowSelector.connect('skip-zone', () => {
+                    this._onSkipZone();
                 });
 
                 // Connect to cancel
@@ -754,6 +783,8 @@ export default class SnapKitExtension extends Extension {
                 });
             }
 
+            // Show both overlays
+            this._zonePositioningOverlay.show();
             this._windowSelector.show();
         } catch (e) {
             this._debug(`ERROR in _showWindowSelector: ${e.message}`);
@@ -801,7 +832,11 @@ export default class SnapKitExtension extends Extension {
                 const success = this._snapHandler.snapWindow(window, this._snapModeLayout.id, zone, monitorIndex);
                 this._debug(`Snap result: ${success}`);
 
-                if (!success) {
+                if (success) {
+                    // Add window to positioned set
+                    this._positionedWindows.add(window);
+                    this._debug(`Added window to positioned set, total positioned: ${this._positionedWindows.size}`);
+                } else {
                     Main.notify('SnapKit', 'Failed to snap window');
                     this._debug('Snap failed - see SnapHandler logs for details');
                 }
@@ -817,11 +852,23 @@ export default class SnapKitExtension extends Extension {
             if (this._snapModeCurrentIndex < this._snapModeZones.length) {
                 this._debug(`Moving to next zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
 
+                // Update zone positioning overlay
+                if (this._zonePositioningOverlay) {
+                    this._zonePositioningOverlay.updateCurrentZone(this._snapModeCurrentIndex);
+                }
+
                 // Refresh window selector for next zone (reuse instead of recreate)
                 if (this._windowSelector) {
                     this._windowSelector.hide();
                     this._windowSelector.refresh();
                     this._windowSelector.show();
+                }
+
+                // Check if there are any unpositioned windows left
+                if (!this._hasUnpositionedWindows()) {
+                    this._debug('No more unpositioned windows available, exiting SNAP MODE');
+                    Main.notify('SnapKit', 'All available windows positioned');
+                    this._exitSnapMode();
                 }
             } else {
                 this._debug(`All ${this._snapModeZones.length} zones filled, exiting SNAP MODE`);
@@ -832,6 +879,91 @@ export default class SnapKitExtension extends Extension {
             this._debug(`ERROR in _onWindowSelected: ${e.message}`);
             this._debug(`ERROR stack: ${e.stack}`);
             this._exitSnapMode();
+        }
+    }
+
+    _onWindowDeselected(window) {
+        this._debug(`=== WINDOW DESELECTED START ===`);
+        this._debug(`Window deselected: ${window ? window.get_title() : 'null'}`);
+
+        try {
+            // Remove from positioned set
+            if (this._positionedWindows.has(window)) {
+                this._positionedWindows.delete(window);
+                this._debug(`Removed window from positioned set, total positioned: ${this._positionedWindows.size}`);
+            }
+
+            // Refresh window selector to update UI
+            if (this._windowSelector) {
+                this._windowSelector.hide();
+                this._windowSelector.refresh();
+                this._windowSelector.show();
+            }
+
+            this._debug(`=== WINDOW DESELECTED END ===`);
+        } catch (e) {
+            this._debug(`ERROR in _onWindowDeselected: ${e.message}`);
+            this._debug(`ERROR stack: ${e.stack}`);
+        }
+    }
+
+    _onSkipZone() {
+        this._debug(`=== SKIP ZONE START ===`);
+        this._debug(`Skipping zone ${this._snapModeCurrentIndex}`);
+
+        try {
+            // Move to next zone without positioning
+            this._snapModeCurrentIndex++;
+            this._debug(`Incremented zone index to ${this._snapModeCurrentIndex}`);
+
+            // Check if we have more zones
+            if (this._snapModeCurrentIndex < this._snapModeZones.length) {
+                this._debug(`Moving to next zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
+
+                // Update zone positioning overlay
+                if (this._zonePositioningOverlay) {
+                    this._zonePositioningOverlay.updateCurrentZone(this._snapModeCurrentIndex);
+                }
+
+                // Refresh window selector for next zone
+                if (this._windowSelector) {
+                    this._windowSelector.hide();
+                    this._windowSelector.refresh();
+                    this._windowSelector.show();
+                }
+            } else {
+                this._debug(`All zones processed, exiting SNAP MODE`);
+                this._exitSnapMode();
+            }
+
+            this._debug(`=== SKIP ZONE END ===`);
+        } catch (e) {
+            this._debug(`ERROR in _onSkipZone: ${e.message}`);
+            this._debug(`ERROR stack: ${e.stack}`);
+            this._exitSnapMode();
+        }
+    }
+
+    _hasUnpositionedWindows() {
+        try {
+            const workspace = global.workspace_manager.get_active_workspace();
+            const windows = workspace.list_windows();
+
+            // Filter to snapable windows that are not already positioned
+            const unpositionedWindows = windows.filter(w => {
+                return w.window_type === Meta.WindowType.NORMAL &&
+                       w.allows_move() &&
+                       w.allows_resize() &&
+                       !w.is_fullscreen() &&
+                       !w.minimized &&
+                       !this._positionedWindows.has(w);
+            });
+
+            this._debug(`Found ${unpositionedWindows.length} unpositioned windows`);
+            return unpositionedWindows.length > 0;
+        } catch (e) {
+            this._debug(`ERROR in _hasUnpositionedWindows: ${e.message}`);
+            return true; // Assume there are windows on error
         }
     }
 
@@ -846,11 +978,20 @@ export default class SnapKitExtension extends Extension {
                 this._debug('SNAP MODE timeout cleared');
             }
 
+            // Destroy zone positioning overlay
+            if (this._zonePositioningOverlay) {
+                this._zonePositioningOverlay.hide();
+                this._zonePositioningOverlay.destroy();
+                this._zonePositioningOverlay = null;
+                this._debug('Zone positioning overlay destroyed');
+            }
+
             // Destroy window selector
             if (this._windowSelector) {
                 this._windowSelector.hide();
                 this._windowSelector.destroy();
                 this._windowSelector = null;
+                this._debug('Window selector destroyed');
             }
 
             // Reset SNAP MODE state
@@ -858,6 +999,8 @@ export default class SnapKitExtension extends Extension {
             this._snapModeZones = [];
             this._snapModeCurrentIndex = 0;
             this._snapModeMonitor = null;
+            this._positionedWindows.clear();
+            this._debug('SNAP MODE state cleared, positioned windows reset');
 
             // Return to CLOSED state
             this._transitionToClosed();

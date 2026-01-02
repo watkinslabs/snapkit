@@ -27,6 +27,7 @@ export class SnapHandler {
         if (!window || !zone) {
             log('SnapKit: Invalid window or zone');
             this._debug('=== SNAP WINDOW FAILED - Invalid window or zone ===');
+            Main.notify('SnapKit', 'Error: Invalid window or zone');
             return false;
         }
 
@@ -65,6 +66,7 @@ export class SnapHandler {
             if (!this._validateGeometry(targetGeometry, monitor)) {
                 log(`SnapKit: Invalid target geometry - x:${targetGeometry.x} y:${targetGeometry.y} w:${targetGeometry.width} h:${targetGeometry.height}`);
                 this._debug('=== SNAP WINDOW FAILED - Invalid geometry ===');
+                Main.notify('SnapKit', 'Error: Invalid window geometry calculated');
                 return false;
             }
 
@@ -80,6 +82,12 @@ export class SnapHandler {
 
             this._debug(`Snapped window to zone ${zone.id} in layout ${layoutId}`);
             this._debug('=== SNAP WINDOW SUCCESS ===');
+
+            // Notify user of successful snap (only when debug mode is off)
+            if (!this._settings.get_boolean('debug-mode')) {
+                Main.notify('SnapKit', `Snapped "${window.get_title()}" to ${zone.id || 'zone'}`);
+            }
+
             return true;
         } catch (e) {
             log(`SnapKit: Error snapping window: ${e.message}`);
@@ -187,36 +195,20 @@ export class SnapHandler {
      * Constrain geometry to window's min/max size constraints
      */
     _constrainGeometry(window, geometry) {
-        const hints = window.get_size_hints();
         let {x, y, width, height} = geometry;
 
-        // Apply minimum size constraints
-        if (hints.min_width && width < hints.min_width) {
-            width = hints.min_width;
-        }
-        if (hints.min_height && height < hints.min_height) {
-            height = hints.min_height;
-        }
+        // GNOME Shell's Meta.Window doesn't have get_size_hints()
+        // Instead, we'll just ensure reasonable minimum sizes
+        const MIN_WIDTH = 100;
+        const MIN_HEIGHT = 100;
 
-        // Apply maximum size constraints
-        if (hints.max_width && width > hints.max_width) {
-            width = hints.max_width;
+        if (width < MIN_WIDTH) {
+            this._debug(`Width ${width} below minimum, setting to ${MIN_WIDTH}`);
+            width = MIN_WIDTH;
         }
-        if (hints.max_height && height > hints.max_height) {
-            height = hints.max_height;
-        }
-
-        // Handle aspect ratio if specified
-        if (hints.min_aspect || hints.max_aspect) {
-            const currentAspect = width / height;
-
-            if (hints.min_aspect && currentAspect < hints.min_aspect) {
-                // Window is too tall, adjust height
-                height = Math.round(width / hints.min_aspect);
-            } else if (hints.max_aspect && currentAspect > hints.max_aspect) {
-                // Window is too wide, adjust width
-                width = Math.round(height * hints.max_aspect);
-            }
+        if (height < MIN_HEIGHT) {
+            this._debug(`Height ${height} below minimum, setting to ${MIN_HEIGHT}`);
+            height = MIN_HEIGHT;
         }
 
         return {x, y, width, height};
