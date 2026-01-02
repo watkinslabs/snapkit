@@ -1,6 +1,7 @@
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 /**
@@ -17,7 +18,8 @@ export const LayoutOverlay = GObject.registerClass({
             vertical: false,
             reactive: true,
             visible: false,
-            opacity: 0
+            opacity: 0,
+            clip_to_allocation: true
         });
 
         this._layoutManager = layoutManager;
@@ -44,6 +46,9 @@ export const LayoutOverlay = GObject.registerClass({
         // Connect to settings changes
         this._settingsChangedId = this._settings.connect('changed',
             this._onSettingsChanged.bind(this));
+
+        // Connect right-click to open preferences
+        this.connect('button-press-event', this._onButtonPress.bind(this));
     }
 
     _sanitizeColor(colorString) {
@@ -64,6 +69,28 @@ export const LayoutOverlay = GObject.registerClass({
         } catch (e) {
             // Silently fail to avoid recursion
         }
+    }
+
+    _onButtonPress(actor, event) {
+        const button = event.get_button();
+
+        // Right-click (button 3) opens preferences
+        if (button === 3) {
+            this._debug('Right-click detected, opening preferences');
+            try {
+                // Use gnome-extensions to open preferences
+                const proc = Gio.Subprocess.new(
+                    ['gnome-extensions', 'prefs', 'snapkit@watkinslabs'],
+                    Gio.SubprocessFlags.NONE
+                );
+                return Clutter.EVENT_STOP;
+            } catch (e) {
+                this._debug(`Failed to open preferences: ${e.message}`);
+                Main.notify('SnapKit', 'Failed to open preferences');
+            }
+        }
+
+        return Clutter.EVENT_PROPAGATE;
     }
 
     _positionOverlay(monitor) {
@@ -101,10 +128,18 @@ export const LayoutOverlay = GObject.registerClass({
         // Get number of enabled layouts
         const numLayouts = this._layoutManager.getEnabledLayouts().length;
 
-        // Calculate total size needed for all layouts in a row
-        // Each layout takes: width + 2*margin, plus spacing between them
-        const totalContentWidth = (layoutWidth + layoutMargin * 2) * numLayouts + containerSpacing * (numLayouts - 1);
-        const totalContentHeight = layoutHeight + layoutMargin * 2;
+        // Calculate total size needed for all layouts
+        // Orientation depends on trigger edge: horizontal for top/bottom, vertical for left/right
+        let totalContentWidth, totalContentHeight;
+        if (triggerEdge === 'left' || triggerEdge === 'right') {
+            // Vertical layout (column) - layouts stacked vertically
+            totalContentWidth = layoutWidth + layoutMargin * 2;
+            totalContentHeight = (layoutHeight + layoutMargin * 2) * numLayouts + containerSpacing * (numLayouts - 1);
+        } else {
+            // Horizontal layout (row) - layouts side by side
+            totalContentWidth = (layoutWidth + layoutMargin * 2) * numLayouts + containerSpacing * (numLayouts - 1);
+            totalContentHeight = layoutHeight + layoutMargin * 2;
+        }
 
         // Add padding to prevent going off screen
         const screenPadding = 40;
@@ -172,10 +207,14 @@ export const LayoutOverlay = GObject.registerClass({
         }
         const containerSpacing = Math.floor(this._settings.get_int('layout-spacing') * scale);
 
+        // Determine orientation based on trigger edge
+        const triggerEdge = this._settings.get_string('trigger-edge');
+        const isVertical = (triggerEdge === 'left' || triggerEdge === 'right');
+
         // Create container for layouts - clip content to container bounds
         const container = new St.BoxLayout({
             style_class: 'snapkit-layout-container',
-            vertical: false,
+            vertical: isVertical,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             x_expand: true,
@@ -428,22 +467,42 @@ export const LayoutOverlay = GObject.registerClass({
             this._settings.get_string('overlay-background-color-end')
         );
 
+        // Determine border radius based on trigger edge (round corners not touching edge)
+        const triggerEdge = this._settings.get_string('trigger-edge');
+        let borderRadius;
+        switch (triggerEdge) {
+            case 'top':
+                borderRadius = '0 0 12px 12px'; // Round bottom corners
+                break;
+            case 'bottom':
+                borderRadius = '12px 12px 0 0'; // Round top corners
+                break;
+            case 'left':
+                borderRadius = '0 12px 12px 0'; // Round right corners
+                break;
+            case 'right':
+                borderRadius = '12px 0 0 12px'; // Round left corners
+                break;
+            default:
+                borderRadius = '0 0 12px 12px';
+        }
+
         let backgroundStyle;
         switch (bgType) {
             case 'gradient-vertical':
                 // St toolkit uses different gradient syntax
-                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd};`;
+                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd}; border-radius: ${borderRadius};`;
                 break;
             case 'gradient-horizontal':
-                backgroundStyle = `background-gradient-direction: horizontal; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd};`;
+                backgroundStyle = `background-gradient-direction: horizontal; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd}; border-radius: ${borderRadius};`;
                 break;
             case 'gradient-radial':
                 // St doesn't support radial gradients natively, fall back to vertical gradient
                 this._debug('Radial gradients not supported in St toolkit, using vertical gradient instead');
-                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd};`;
+                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd}; border-radius: ${borderRadius};`;
                 break;
             default: // solid
-                backgroundStyle = `background-color: ${bgColor};`;
+                backgroundStyle = `background-color: ${bgColor}; border-radius: ${borderRadius};`;
         }
 
         this.set_style(backgroundStyle);
@@ -606,8 +665,18 @@ export const LayoutOverlay = GObject.registerClass({
         const layoutMargin = Math.floor(10 * scale);
         const containerSpacing = Math.floor(this._settings.get_int('layout-spacing') * scale);
         const numLayouts = this._layoutManager.getEnabledLayouts().length;
-        const totalContentWidth = (layoutWidth + layoutMargin * 2) * numLayouts + containerSpacing * (numLayouts - 1);
-        const totalContentHeight = layoutHeight + layoutMargin * 2;
+
+        // Calculate total size based on orientation (same logic as _positionOverlay)
+        let totalContentWidth, totalContentHeight;
+        if (triggerEdge === 'left' || triggerEdge === 'right') {
+            // Vertical layout (column) - layouts stacked vertically
+            totalContentWidth = layoutWidth + layoutMargin * 2;
+            totalContentHeight = (layoutHeight + layoutMargin * 2) * numLayouts + containerSpacing * (numLayouts - 1);
+        } else {
+            // Horizontal layout (row) - layouts side by side
+            totalContentWidth = (layoutWidth + layoutMargin * 2) * numLayouts + containerSpacing * (numLayouts - 1);
+            totalContentHeight = layoutHeight + layoutMargin * 2;
+        }
         
         const screenPadding = 40;
         const maxWidth = monitor.width - screenPadding * 2;
@@ -625,7 +694,7 @@ export const LayoutOverlay = GObject.registerClass({
                 y = monitor.y;
                 startX = x;
                 startY = monitor.y - height; // Start above screen
-                borderRadius = '0 0 8px 8px';
+                borderRadius = '0 0 12px 12px';
                 break;
             case 'bottom':
                 width = Math.min(totalContentWidth, maxWidth);
@@ -634,7 +703,7 @@ export const LayoutOverlay = GObject.registerClass({
                 y = monitor.y + monitor.height - height;
                 startX = x;
                 startY = monitor.y + monitor.height; // Start below screen
-                borderRadius = '8px 8px 0 0';
+                borderRadius = '12px 12px 0 0';
                 break;
             case 'left':
                 width = triggerZoneHeight;
@@ -643,7 +712,7 @@ export const LayoutOverlay = GObject.registerClass({
                 y = monitor.y + (monitor.height - height) / 2;
                 startX = monitor.x - width; // Start left of screen
                 startY = y;
-                borderRadius = '0 8px 8px 0';
+                borderRadius = '0 12px 12px 0';
                 break;
             case 'right':
                 width = triggerZoneHeight;
@@ -652,7 +721,7 @@ export const LayoutOverlay = GObject.registerClass({
                 y = monitor.y + (monitor.height - height) / 2;
                 startX = monitor.x + monitor.width; // Start right of screen
                 startY = y;
-                borderRadius = '8px 0 0 8px';
+                borderRadius = '12px 0 0 12px';
                 break;
             default:
                 width = Math.min(totalContentWidth, maxWidth);
@@ -661,7 +730,7 @@ export const LayoutOverlay = GObject.registerClass({
                 y = monitor.y;
                 startX = x;
                 startY = monitor.y - height;
-                borderRadius = '0 0 8px 8px';
+                borderRadius = '0 0 12px 12px';
         }
 
         // Store final position for hide animation
@@ -683,25 +752,33 @@ export const LayoutOverlay = GObject.registerClass({
             child.visible = false;
         });
 
+        // Set final position immediately (don't position off-screen to prevent drawing on other monitors)
+        this.set_position(x, y);
+
         // Check if auto-hide is enabled for slide animation
         const autoHideEnabled = this._settings.get_boolean('auto-hide-enabled');
         const duration = this._settings.get_int('animation-duration');
 
         if (autoHideEnabled && duration > 0) {
-            // Start off-screen and slide in
-            this.set_position(startX, startY);
+            // Use translation to slide in, keeping the widget bounds on this monitor
+            const translateX = startX - x;
+            const translateY = startY - y;
+
+            this.translation_x = translateX;
+            this.translation_y = translateY;
             this.visible = true;
             this.opacity = 255;
 
             this.ease({
-                x: x,
-                y: y,
+                translation_x: 0,
+                translation_y: 0,
                 duration: duration,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD
             });
         } else {
             // No animation, just show
-            this.set_position(x, y);
+            this.translation_x = 0;
+            this.translation_y = 0;
             this.visible = true;
             this.opacity = 255;
         }
@@ -722,20 +799,27 @@ export const LayoutOverlay = GObject.registerClass({
         const autoHideEnabled = this._settings.get_boolean('auto-hide-enabled');
         const duration = this._settings.get_int('animation-duration');
 
-        if (autoHideEnabled && duration > 0 && this._hitboxStartX !== undefined) {
-            // Slide out animation
+        if (autoHideEnabled && duration > 0 && this._hitboxStartX !== undefined && this._hitboxFinalX !== undefined) {
+            // Slide out animation using translation (keeps widget bounds on this monitor)
+            const translateX = this._hitboxStartX - this._hitboxFinalX;
+            const translateY = this._hitboxStartY - this._hitboxFinalY;
+
             this.ease({
-                x: this._hitboxStartX,
-                y: this._hitboxStartY,
+                translation_x: translateX,
+                translation_y: translateY,
                 duration: duration,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                 onComplete: () => {
                     this.visible = false;
+                    this.translation_x = 0;
+                    this.translation_y = 0;
                 }
             });
         } else {
             // No animation, just hide
             this.visible = false;
+            this.translation_x = 0;
+            this.translation_y = 0;
         }
     }
 
@@ -746,6 +830,10 @@ export const LayoutOverlay = GObject.registerClass({
         try {
             // Stop any ongoing animations to prevent color interpolation
             this.remove_all_transitions();
+
+            // Reset translation from hitbox animations
+            this.translation_x = 0;
+            this.translation_y = 0;
 
             // Update position if monitor specified
             if (monitor) {
@@ -765,22 +853,42 @@ export const LayoutOverlay = GObject.registerClass({
             this._settings.get_string('overlay-background-color-end')
         );
 
+        // Determine border radius based on trigger edge (round corners not touching edge)
+        const triggerEdge = this._settings.get_string('trigger-edge');
+        let borderRadius;
+        switch (triggerEdge) {
+            case 'top':
+                borderRadius = '0 0 12px 12px'; // Round bottom corners
+                break;
+            case 'bottom':
+                borderRadius = '12px 12px 0 0'; // Round top corners
+                break;
+            case 'left':
+                borderRadius = '0 12px 12px 0'; // Round right corners
+                break;
+            case 'right':
+                borderRadius = '12px 0 0 12px'; // Round left corners
+                break;
+            default:
+                borderRadius = '0 0 12px 12px';
+        }
+
         let backgroundStyle;
         switch (bgType) {
             case 'gradient-vertical':
                 // St toolkit uses different gradient syntax
-                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd};`;
+                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd}; border-radius: ${borderRadius};`;
                 break;
             case 'gradient-horizontal':
-                backgroundStyle = `background-gradient-direction: horizontal; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd};`;
+                backgroundStyle = `background-gradient-direction: horizontal; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd}; border-radius: ${borderRadius};`;
                 break;
             case 'gradient-radial':
                 // St doesn't support radial gradients natively, fall back to vertical gradient
                 this._debug('Radial gradients not supported in St toolkit, using vertical gradient instead');
-                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd};`;
+                backgroundStyle = `background-gradient-direction: vertical; background-gradient-start: ${bgColor}; background-gradient-end: ${bgColorEnd}; border-radius: ${borderRadius};`;
                 break;
             default: // solid
-                backgroundStyle = `background-color: ${bgColor};`;
+                backgroundStyle = `background-color: ${bgColor}; border-radius: ${borderRadius};`;
         }
         this.set_style(backgroundStyle);
 
