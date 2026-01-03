@@ -422,30 +422,36 @@ export const WindowSelector = GObject.registerClass({
         const fitCheck = this._canWindowFitCurrentZone(window);
         const canFit = fitCheck.fits;
 
+        // Size and padding are configurable via settings
+        const buttonWidth = Math.min(600, Math.max(200, this._settings.get_int('snap-thumbnail-width') || 400));
+        const buttonHeight = Math.min(500, Math.max(180, this._settings.get_int('snap-thumbnail-height') || 320));
+        const padding = Math.min(64, Math.max(0, this._settings.get_int('snap-thumbnail-padding') || 16));
+        const showLabels = this._settings.get_boolean('show-window-labels');
+
         // Base style depends on positioned state and fit status
         let baseStyle;
         if (isPositioned) {
             baseStyle = `background-color: rgba(38, 162, 105, 0.4);
                border: 2px solid rgba(38, 162, 105, 0.8);
                border-radius: 12px;
-               padding: 16px;
-               width: 400px;
-               height: 320px;`;
+               padding: ${padding}px;
+               width: ${buttonWidth}px;
+               height: ${buttonHeight}px;`;
         } else if (!canFit) {
             // Window won't fit - show with warning style
             baseStyle = `background-color: rgba(192, 28, 40, 0.3);
                border: 2px solid rgba(192, 28, 40, 0.7);
                border-radius: 12px;
-               padding: 16px;
-               width: 400px;
-               height: 320px;`;
+               padding: ${padding}px;
+               width: ${buttonWidth}px;
+               height: ${buttonHeight}px;`;
         } else {
             baseStyle = `background-color: rgba(255, 255, 255, 0.08);
                border: 1px solid rgba(255, 255, 255, 0.15);
                border-radius: 12px;
-               padding: 16px;
-               width: 400px;
-               height: 320px;`;
+               padding: ${padding}px;
+               width: ${buttonWidth}px;
+               height: ${buttonHeight}px;`;
         }
 
         button.set_style(baseStyle);
@@ -508,42 +514,34 @@ export const WindowSelector = GObject.registerClass({
         }
 
         // Window thumbnail
-        const clone = this._createWindowThumbnail(window);
-        if (clone) {
-            button._clone = clone;  // Store clone reference for cleanup
-            box.add_child(clone);
+        const labelSpace = showLabels ? 60 : 20;
+        const targetWidth = Math.max(80, buttonWidth - padding * 2);
+        const targetHeight = Math.max(80, buttonHeight - padding * 2 - labelSpace);
+
+        const thumbnailWrapper = this._createWindowThumbnail(window, targetWidth, targetHeight);
+        if (thumbnailWrapper) {
+            button._clone = thumbnailWrapper._clone;  // Store clone reference for cleanup
+            box.add_child(thumbnailWrapper);
         }
 
-        // Window title
-        const title = new St.Label({
-            text: window.get_title() || 'Untitled',
-            x_align: Clutter.ActorAlign.CENTER
-        });
-        title.set_style(`
-            font-size: 13px;
-            font-weight: 500;
-            color: white;
-            margin-top: 10px;
-            max-width: 200px;
-            text-align: center;
-        `);
-        title.clutter_text.ellipsize = 3; // PANGO_ELLIPSIZE_END
-        box.add_child(title);
-
-        // App name
-        const app = Shell.WindowTracker.get_default().get_window_app(window);
-        if (app) {
-            const appLabel = new St.Label({
-                text: app.get_name(),
+        // Labels (single line, optional)
+        if (showLabels) {
+            const app = Shell.WindowTracker.get_default().get_window_app(window);
+            const labelText = app ? `${window.get_title() || 'Untitled'} — ${app.get_name()}` : (window.get_title() || 'Untitled');
+            const title = new St.Label({
+                text: labelText,
                 x_align: Clutter.ActorAlign.CENTER
             });
-            appLabel.set_style(`
-                font-size: 11px;
-                color: rgba(255, 255, 255, 0.5);
-                margin-top: 4px;
+            title.set_style(`
+                font-size: 13px;
+                font-weight: 500;
+                color: white;
+                margin-top: 10px;
+                max-width: ${Math.max(120, targetWidth - 20)}px;
+                text-align: center;
             `);
-            appLabel.clutter_text.ellipsize = 3;
-            box.add_child(appLabel);
+            title.clutter_text.ellipsize = 3; // PANGO_ELLIPSIZE_END
+            box.add_child(title);
         }
 
         // Handle hover
@@ -553,9 +551,9 @@ export const WindowSelector = GObject.registerClass({
                     background-color: rgba(192, 97, 203, 0.5);
                     border: 2px solid rgba(192, 97, 203, 0.9);
                     border-radius: 12px;
-                    padding: 16px;
-                    width: 400px;
-                    height: 320px;
+                    padding: ${padding}px;
+                    width: ${buttonWidth}px;
+                    height: ${buttonHeight}px;
                 `);
             } else if (!canFit) {
                 // Warning hover - slightly brighter red
@@ -563,18 +561,18 @@ export const WindowSelector = GObject.registerClass({
                     background-color: rgba(192, 28, 40, 0.5);
                     border: 2px solid rgba(192, 28, 40, 0.9);
                     border-radius: 12px;
-                    padding: 16px;
-                    width: 400px;
-                    height: 320px;
+                    padding: ${padding}px;
+                    width: ${buttonWidth}px;
+                    height: ${buttonHeight}px;
                 `);
             } else {
                 button.set_style(`
                     background-color: rgba(53, 132, 228, 0.4);
                     border: 2px solid rgba(53, 132, 228, 0.8);
                     border-radius: 12px;
-                    padding: 16px;
-                    width: 400px;
-                    height: 320px;
+                    padding: ${padding}px;
+                    width: ${buttonWidth}px;
+                    height: ${buttonHeight}px;
                 `);
             }
         }));
@@ -597,14 +595,17 @@ export const WindowSelector = GObject.registerClass({
         return button;
     }
 
-    _createWindowThumbnail(window) {
+    _createWindowThumbnail(window, targetWidth, targetHeight) {
+        const TARGET_WIDTH = targetWidth;
+        const TARGET_HEIGHT = targetHeight;
+
         try {
             // For minimized windows, use app icon instead of clone
             if (window.minimized) {
                 const app = Shell.WindowTracker.get_default().get_window_app(window);
                 if (app) {
-                    const icon = app.create_icon_texture(128);
-                    icon.set_size(128, 128);
+                    const icon = app.create_icon_texture(Math.max(TARGET_WIDTH, TARGET_HEIGHT));
+                    icon.set_size(TARGET_WIDTH, TARGET_HEIGHT);
                     return icon;
                 }
                 return null;
@@ -622,20 +623,36 @@ export const WindowSelector = GObject.registerClass({
                 return null;
             }
 
+            const [width, height] = windowActor.get_size();
+            if (width === 0 || height === 0) {
+                return null;
+            }
+
             const clone = new Clutter.Clone({
                 source: windowActor,
                 reactive: false
             });
 
-            // Scale to fit thumbnail area - large preview
-            const thumbWidth = 360;
-            const thumbHeight = 240;
-            const [width, height] = windowActor.get_size();
-            const scale = Math.min(thumbWidth / width, thumbHeight / height);
-            clone.set_scale(scale, scale);
-            clone.set_size(width * scale, height * scale);
+            // Resize to cover the target area while preserving aspect ratio
+            const scale = Math.max(TARGET_WIDTH / width, TARGET_HEIGHT / height);
+            const scaledWidth = width * scale;
+            const scaledHeight = height * scale;
+            clone.set_size(scaledWidth, scaledHeight);
 
-            return clone;
+            // Wrapper that clips overflow so the scaled clone fills the area
+            const wrapper = new St.Widget({
+                width: TARGET_WIDTH,
+                height: TARGET_HEIGHT,
+                x_expand: true,
+                y_expand: true,
+                layout_manager: new Clutter.BinLayout(),
+                clip_to_allocation: true
+            });
+            clone.set_position((TARGET_WIDTH - scaledWidth) / 2, (TARGET_HEIGHT - scaledHeight) / 2);
+            wrapper.add_child(clone);
+            wrapper._clone = clone;
+
+            return wrapper;
         } catch (e) {
             this._debug(`Failed to create thumbnail: ${e.message}`);
             return null;

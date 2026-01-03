@@ -1,34 +1,69 @@
-import {PRESET_LAYOUTS} from '../layouts/presets.js';
+import { PRESET_LAYOUTS } from '../layouts/presets.js';
+import {
+    resolveLayout,
+    resolveSimpleLayout,
+    findDividerForResize,
+    calculateDividerDrag
+} from './layoutResolver.js';
+import {
+    validateLayout,
+    validateSimpleLayout,
+    isFullSpecLayout,
+    getLeafIds
+} from './layoutValidator.js';
+import { OverrideStore } from './overrideStore.js';
 
 /**
- * LayoutManager - Manages layout definitions and provides utilities
+ * LayoutManager - Manages layout definitions, resolution, and overrides
+ *
+ * Supports both:
+ * - Simple format: { id, name, zones: [{id, x, y, width, height}] }
+ * - Full spec format: { schema_version: 1, name, root: {...} }
  */
 export class LayoutManager {
     constructor(settings) {
         this._settings = settings;
-        this._layouts = new Map();
+        this._layouts = new Map();          // id -> layout object
+        this._resolvedCache = new Map();    // cacheKey -> resolved rects
+        this._overrideStore = new OverrideStore();
+
         this._loadLayouts();
     }
 
+    _debug(message) {
+        if (this._settings && this._settings.get_boolean('debug-mode')) {
+            log(`SnapKit LayoutManager: ${message}`);
+        }
+    }
+
+    /**
+     * Load all layouts (presets + custom)
+     */
     _loadLayouts() {
         // Load preset layouts
-        for (let layout of PRESET_LAYOUTS) {
-            this._layouts.set(layout.id, layout);
+        for (const layout of PRESET_LAYOUTS) {
+            if (this._validateAndAdd(layout)) {
+                this._debug(`Loaded preset layout: ${this.getLayoutId(layout)}`);
+            }
         }
 
         // Load custom layouts from settings
         this._loadCustomLayouts();
     }
 
+    /**
+     * Load custom layouts from settings
+     */
     _loadCustomLayouts() {
         try {
             const customLayoutsJson = this._settings.get_string('custom-layouts');
+            if (!customLayoutsJson || customLayoutsJson === '[]') return;
+
             const customLayouts = JSON.parse(customLayoutsJson);
 
-            for (let layout of customLayouts) {
-                // Validate layout structure
-                if (this._validateLayout(layout)) {
-                    this._layouts.set(layout.id, layout);
+            for (const layout of customLayouts) {
+                if (this._validateAndAdd(layout)) {
+                    this._debug(`Loaded custom layout: ${layout.name || layout.id}`);
                 }
             }
         } catch (e) {
@@ -36,41 +71,42 @@ export class LayoutManager {
         }
     }
 
-    _validateLayout(layout) {
-        // Basic validation
-        if (!layout.id || !layout.name || !layout.zones) {
-            return false;
-        }
-
-        if (!Array.isArray(layout.zones) || layout.zones.length === 0) {
-            return false;
-        }
-
-        // Validate each zone
-        for (let zone of layout.zones) {
-            if (typeof zone.x !== 'number' || typeof zone.y !== 'number' ||
-                typeof zone.width !== 'number' || typeof zone.height !== 'number') {
+    /**
+     * Validate and add a layout to the map
+     * @param {object} layout
+     * @returns {boolean} - true if added
+     */
+    _validateAndAdd(layout) {
+        // Determine format and validate
+        if (isFullSpecLayout(layout)) {
+            const result = validateLayout(layout);
+            if (!result.valid) {
+                log(`SnapKit: Invalid full-spec layout '${layout.name}': ${result.errors.join(', ')}`);
                 return false;
             }
-
-            // Ensure coordinates are in valid range (0-1)
-            if (zone.x < 0 || zone.x > 1 || zone.y < 0 || zone.y > 1 ||
-                zone.width <= 0 || zone.width > 1 || zone.height <= 0 || zone.height > 1) {
+            // Use name as ID for full-spec layouts
+            this._layouts.set(layout.name, layout);
+            return true;
+        } else {
+            const result = validateSimpleLayout(layout);
+            if (!result.valid) {
+                log(`SnapKit: Invalid simple layout '${layout.id}': ${result.errors.join(', ')}`);
                 return false;
             }
+            this._layouts.set(layout.id, layout);
+            return true;
         }
-
-        return true;
     }
 
     /**
      * Get all enabled layouts based on settings
+     * @returns {object[]}
      */
     getEnabledLayouts() {
         const enabledIds = this._settings.get_strv('enabled-layouts');
         const enabledLayouts = [];
 
-        for (let id of enabledIds) {
+        for (const id of enabledIds) {
             const layout = this._layouts.get(id);
             if (layout) {
                 enabledLayouts.push(layout);
@@ -82,6 +118,8 @@ export class LayoutManager {
 
     /**
      * Get a specific layout by ID
+     * @param {string} id
+     * @returns {object|undefined}
      */
     getLayout(id) {
         return this._layouts.get(id);
@@ -89,13 +127,98 @@ export class LayoutManager {
 
     /**
      * Get all available layouts (both preset and custom)
+     * @returns {object[]}
      */
     getAllLayouts() {
         return Array.from(this._layouts.values());
     }
 
     /**
-     * Calculate absolute geometry for a zone based on monitor work area
+     * Get the layout ID/name
+     * @param {object} layout
+     * @returns {string}
+     */
+    getLayoutId(layout) {
+        return isFullSpecLayout(layout) ? layout.name : layout.id;
+    }
+
+    /**
+     * Get all leaf/zone IDs for a layout
+     * @param {object} layout
+     * @returns {string[]}
+     */
+    getZoneIds(layout) {
+        return getLeafIds(layout);
+    }
+
+    /**
+     * Resolve a layout to pixel rectangles
+     *
+     * @param {string|object} layoutOrId - Layout object or ID
+     * @param {{x: number, y: number, width: number, height: number}} workArea
+     * @param {object} monitor - Monitor object for override lookup
+     * @returns {Map<string, {tileRect: object, windowRect: object}>}
+     */
+    resolveLayoutRects(layoutOrId, workArea, monitor = null) {
+        const layout = typeof layoutOrId === 'string'
+            ? this._layouts.get(layoutOrId)
+            : layoutOrId;
+
+        if (!layout) {
+            this._debug(`Layout not found: ${layoutOrId}`);
+            return new Map();
+        }
+
+        // Get overrides for this layout + monitor
+        let overrides = [];
+        if (monitor) {
+            const monitorKey = OverrideStore.getMonitorKey(monitor);
+            const layoutName = this.getLayoutId(layout);
+            overrides = this._overrideStore.getOverrides(layoutName, monitorKey);
+        }
+
+        // Resolve based on format
+        if (isFullSpecLayout(layout)) {
+            return resolveLayout(layout, workArea, overrides);
+        } else {
+            // Simple format - use simple resolver
+            return resolveSimpleLayout(layout, workArea);
+        }
+    }
+
+    /**
+     * Get the window rectangle for a specific zone
+     *
+     * @param {string|object} layoutOrId
+     * @param {string} zoneId
+     * @param {{x: number, y: number, width: number, height: number}} workArea
+     * @param {object} monitor
+     * @returns {{x: number, y: number, width: number, height: number}|null}
+     */
+    getZoneWindowRect(layoutOrId, zoneId, workArea, monitor = null) {
+        const rects = this.resolveLayoutRects(layoutOrId, workArea, monitor);
+        const zoneRects = rects.get(zoneId);
+        return zoneRects?.windowRect ?? null;
+    }
+
+    /**
+     * Get the tile rectangle for a specific zone
+     *
+     * @param {string|object} layoutOrId
+     * @param {string} zoneId
+     * @param {{x: number, y: number, width: number, height: number}} workArea
+     * @param {object} monitor
+     * @returns {{x: number, y: number, width: number, height: number}|null}
+     */
+    getZoneTileRect(layoutOrId, zoneId, workArea, monitor = null) {
+        const rects = this.resolveLayoutRects(layoutOrId, workArea, monitor);
+        const zoneRects = rects.get(zoneId);
+        return zoneRects?.tileRect ?? null;
+    }
+
+    /**
+     * Calculate absolute geometry for a zone (backward compatibility)
+     * @deprecated Use getZoneWindowRect instead
      */
     calculateZoneGeometry(zone, workArea) {
         const geometry = {
@@ -116,16 +239,119 @@ export class LayoutManager {
     }
 
     /**
-     * Find which zone contains the given point (relative coordinates 0-1)
+     * Find which zone contains the given point
+     * @param {object} layout
+     * @param {number} x - Absolute x coordinate
+     * @param {number} y - Absolute y coordinate
+     * @param {{x: number, y: number, width: number, height: number}} workArea
+     * @param {object} monitor
+     * @returns {{id: string, tileRect: object, windowRect: object}|null}
      */
-    findZoneAtPoint(layout, x, y) {
-        for (let zone of layout.zones) {
-            if (x >= zone.x && x < zone.x + zone.width &&
-                y >= zone.y && y < zone.y + zone.height) {
-                return zone;
+    findZoneAtPoint(layout, x, y, workArea, monitor = null) {
+        const rects = this.resolveLayoutRects(layout, workArea, monitor);
+
+        for (const [zoneId, zoneRects] of rects) {
+            const rect = zoneRects.tileRect;
+            if (x >= rect.x && x < rect.x + rect.width &&
+                y >= rect.y && y < rect.y + rect.height) {
+                return {
+                    id: zoneId,
+                    ...zoneRects
+                };
             }
         }
+
         return null;
+    }
+
+    /**
+     * Handle a window resize and update divider overrides
+     *
+     * @param {string} layoutId
+     * @param {string} zoneId - The zone being resized
+     * @param {string} edge - Which edge was dragged: 'left', 'right', 'top', 'bottom'
+     * @param {number} deltaPixels - How many pixels the edge moved
+     * @param {{x: number, y: number, width: number, height: number}} workArea
+     * @param {object} monitor
+     * @returns {boolean} - true if override was updated
+     */
+    handleResize(layoutId, zoneId, edge, deltaPixels, workArea, monitor) {
+        const layout = this._layouts.get(layoutId);
+        if (!layout || !isFullSpecLayout(layout)) {
+            this._debug(`Cannot handle resize for non-full-spec layout: ${layoutId}`);
+            return false;
+        }
+
+        // Find which divider this resize affects
+        const dividerInfo = findDividerForResize(layout, zoneId, edge);
+        if (!dividerInfo) {
+            this._debug(`No divider found for resize: ${zoneId} ${edge}`);
+            return false;
+        }
+
+        // Calculate axis length for the split
+        const isHorizontal = dividerInfo.direction === 'col';
+        const axisLength = isHorizontal ? workArea.width : workArea.height;
+
+        // Calculate new sizes
+        const newSizes = calculateDividerDrag(
+            layout,
+            dividerInfo.splitPath,
+            dividerInfo.dividerIndex,
+            deltaPixels,
+            axisLength
+        );
+
+        if (newSizes.length === 0) {
+            this._debug('No size changes calculated');
+            return false;
+        }
+
+        // Store the override
+        const monitorKey = OverrideStore.getMonitorKey(monitor);
+        this._overrideStore.setOverride(
+            layoutId,
+            monitorKey,
+            dividerInfo.splitPath,
+            newSizes
+        );
+
+        // Invalidate cache
+        this._invalidateCache(layoutId, monitorKey);
+
+        this._debug(`Updated override for ${layoutId} divider ${dividerInfo.dividerIndex}`);
+        return true;
+    }
+
+    /**
+     * Reset overrides for a layout on current monitor
+     * @param {string} layoutId
+     * @param {object} monitor
+     */
+    resetOverrides(layoutId, monitor) {
+        const monitorKey = OverrideStore.getMonitorKey(monitor);
+        this._overrideStore.clearOverrides(layoutId, monitorKey);
+        this._invalidateCache(layoutId, monitorKey);
+    }
+
+    /**
+     * Invalidate cached resolutions
+     */
+    _invalidateCache(layoutId, monitorKey) {
+        const keyPrefix = `${layoutId}:${monitorKey}`;
+        for (const key of this._resolvedCache.keys()) {
+            if (key.startsWith(keyPrefix)) {
+                this._resolvedCache.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Get the override store (for TileManager access)
+     * @returns {OverrideStore}
+     */
+    getOverrideStore() {
+        return this._overrideStore;
     }
 
     /**
@@ -133,11 +359,88 @@ export class LayoutManager {
      */
     reload() {
         this._layouts.clear();
+        this._resolvedCache.clear();
         this._loadLayouts();
+    }
+
+    /**
+     * Add a custom layout
+     * @param {object} layout
+     * @returns {boolean}
+     */
+    addCustomLayout(layout) {
+        if (!this._validateAndAdd(layout)) {
+            return false;
+        }
+
+        // Save to settings
+        this._saveCustomLayouts();
+        return true;
+    }
+
+    /**
+     * Remove a custom layout
+     * @param {string} layoutId
+     * @returns {boolean}
+     */
+    removeCustomLayout(layoutId) {
+        // Don't remove presets
+        if (PRESET_LAYOUTS.some(p => p.id === layoutId)) {
+            return false;
+        }
+
+        if (!this._layouts.has(layoutId)) {
+            return false;
+        }
+
+        this._layouts.delete(layoutId);
+        this._overrideStore.clearLayoutOverrides(layoutId);
+        this._saveCustomLayouts();
+
+        return true;
+    }
+
+    /**
+     * Save custom layouts to settings
+     */
+    _saveCustomLayouts() {
+        const customLayouts = [];
+
+        for (const [id, layout] of this._layouts) {
+            // Skip presets (check both id and name for full-spec layouts)
+            if (PRESET_LAYOUTS.some(p => (p.id === id) || (p.name === id))) {
+                continue;
+            }
+            customLayouts.push(layout);
+        }
+
+        try {
+            const json = JSON.stringify(customLayouts);
+            this._settings.set_string('custom-layouts', json);
+        } catch (e) {
+            log(`SnapKit: Failed to save custom layouts: ${e.message}`);
+        }
+    }
+
+    /**
+     * Check if a layout is a preset
+     * @param {string} layoutId
+     * @returns {boolean}
+     */
+    isPreset(layoutId) {
+        // Check both id (simple format) and name (full-spec format)
+        return PRESET_LAYOUTS.some(p => (p.id === layoutId) || (p.name === layoutId));
     }
 
     destroy() {
         this._layouts.clear();
+        this._resolvedCache.clear();
+
+        if (this._overrideStore) {
+            this._overrideStore.destroy();
+            this._overrideStore = null;
+        }
+
         this._settings = null;
     }
 }

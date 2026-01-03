@@ -14,6 +14,7 @@ import {LayoutOverlay} from './lib/overlayUI.js';
 import {SnapHandler} from './lib/snapHandler.js';
 import {WindowSelector} from './lib/windowSelector.js';
 import {TileManager} from './lib/tileManager.js';
+import {SnapPreviewOverlay} from './lib/snapPreviewOverlay.js';
 
 // Overlay states
 const OverlayState = {
@@ -133,8 +134,12 @@ export default class SnapKitExtension extends Extension {
             this._debug('Snap handler created');
 
             this._debug('Creating tile manager...');
-            this._tileManager = new TileManager(this._settings);
+            this._tileManager = new TileManager(this._settings, this._layoutManager);
             this._debug('Tile manager created');
+
+            this._debug('Creating snap preview overlay...');
+            this._snapPreview = new SnapPreviewOverlay(this._settings, this._layoutManager);
+            this._debug('Snap preview overlay created');
 
             // Create overlays and show hitboxes
             this._debug('Creating overlays...');
@@ -229,6 +234,11 @@ export default class SnapKitExtension extends Extension {
             this._tileManager = null;
         }
 
+        if (this._snapPreview) {
+            this._snapPreview.destroy();
+            this._snapPreview = null;
+        }
+
         if (this._snapHandler) {
             this._snapHandler.destroy();
             this._snapHandler = null;
@@ -253,16 +263,109 @@ export default class SnapKitExtension extends Extension {
             this._debug('Window drag detected, starting motion tracking');
             this._isDragging = true;
             this._draggedWindow = window;
+
+            // Show snap preview if enabled
+            if (this._settings.get_boolean('snap-preview-enabled') && this._snapPreview) {
+                // Check if snap-disable key is held
+                if (!this._isSnapDisableKeyHeld()) {
+                    this._snapPreview.show();
+                    this._debug('Snap preview shown');
+                }
+            }
         }
     }
 
     _onGrabEnd(display, window, grabOp) {
         if (grabOp === Meta.GrabOp.MOVING) {
+            // Check for auto-snap before hiding
+            if (this._snapPreview && this._settings.get_boolean('snap-preview-auto-snap')) {
+                const zone = this._snapPreview.getHighlightedZone();
+                if (zone && this._draggedWindow) {
+                    this._debug(`Auto-snapping to zone: ${zone.id}`);
+                    this._autoSnapToZone(this._draggedWindow, zone);
+                }
+            }
+
+            // Hide snap preview
+            if (this._snapPreview) {
+                this._snapPreview.hide();
+            }
+
             this._isDragging = false;
             this._draggedWindow = null;
 
             // Hide all overlays
             this._hideOverlays();
+        }
+    }
+
+    /**
+     * Check if the snap-disable key is currently held
+     */
+    _isSnapDisableKeyHeld() {
+        try {
+            const seat = Clutter.get_default_backend().get_default_seat();
+            const keymap = seat.get_keymap();
+            const modState = keymap.get_modifier_state();
+
+            const disableKey = this._settings.get_string('snap-disable-key');
+
+            // Check common keys
+            if (disableKey === 'space') {
+                // Space is tricky - check via keyboard state
+                // For now, just return false (space detection requires more work)
+                return false;
+            } else if (disableKey === 'ctrl') {
+                return (modState & Clutter.ModifierType.CONTROL_MASK) !== 0;
+            } else if (disableKey === 'alt') {
+                return (modState & Clutter.ModifierType.MOD1_MASK) !== 0;
+            } else if (disableKey === 'shift') {
+                return (modState & Clutter.ModifierType.SHIFT_MASK) !== 0;
+            } else if (disableKey === 'super') {
+                return (modState & Clutter.ModifierType.MOD4_MASK) !== 0;
+            }
+        } catch (e) {
+            this._debug(`Error checking modifier state: ${e.message}`);
+        }
+        return false;
+    }
+
+    /**
+     * Auto-snap a window to a zone
+     */
+    _autoSnapToZone(window, zone) {
+        if (!zone.windowRect) return;
+
+        const rect = zone.windowRect;
+        try {
+            window.move_resize_frame(
+                true,
+                Math.round(rect.x),
+                Math.round(rect.y),
+                Math.round(rect.width),
+                Math.round(rect.height)
+            );
+
+            // Register with tile manager
+            if (this._tileManager && this._snapPreview) {
+                const layout = this._snapPreview.getCurrentLayout();
+                if (layout) {
+                    const monitor = Main.layoutManager.monitors.find(m =>
+                        rect.x >= m.x && rect.x < m.x + m.width
+                    );
+                    if (monitor) {
+                        this._tileManager.registerSnappedWindow(
+                            window,
+                            this._layoutManager.getLayoutId(layout),
+                            zone,
+                            monitor.index,
+                            layout
+                        );
+                    }
+                }
+            }
+        } catch (e) {
+            this._debug(`Error auto-snapping: ${e.message}`);
         }
     }
 
@@ -289,6 +392,11 @@ export default class SnapKitExtension extends Extension {
 
             // Get mouse coordinates
             let [x, y] = event.get_coords();
+
+            // Update snap preview highlight if dragging
+            if (this._isDragging && this._snapPreview) {
+                this._snapPreview.updateHighlight(x, y);
+            }
 
             // Determine which monitor to use based on settings
             let monitor = this._getActiveMonitor(x, y);

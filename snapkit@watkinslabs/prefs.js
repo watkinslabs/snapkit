@@ -5,6 +5,9 @@ import Gio from 'gi://Gio';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import { LayoutEditorDialog } from './lib/layoutEditorDialog.js';
+import { getLayoutSummary } from './lib/layoutEditorState.js';
+
 export default class SnapKitPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
@@ -482,6 +485,90 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         window.add(behaviorPage);
 
+        // ===== SNAP MODE UI PAGE =====
+        const snapUiPage = new Adw.PreferencesPage({
+            title: 'Snap Mode UI',
+            icon_name: 'applications-graphics-symbolic'
+        });
+
+        const snapPreviewGroup = new Adw.PreferencesGroup({
+            title: 'Window Previews',
+            description: 'Control size and labels of SNAP MODE thumbnails'
+        });
+
+        const thumbWidthRow = new Adw.ActionRow({
+            title: 'Thumbnail Width',
+            subtitle: 'Width of each window thumbnail (px)'
+        });
+        const thumbWidthSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 200,
+                upper: 600,
+                step_increment: 10,
+                value: settings.get_int('snap-thumbnail-width')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        thumbWidthSpin.connect('value-changed', (widget) => {
+            settings.set_int('snap-thumbnail-width', widget.get_value());
+        });
+        thumbWidthRow.add_suffix(thumbWidthSpin);
+        snapPreviewGroup.add(thumbWidthRow);
+
+        const thumbHeightRow = new Adw.ActionRow({
+            title: 'Thumbnail Height',
+            subtitle: 'Height of each window thumbnail (px)'
+        });
+        const thumbHeightSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 180,
+                upper: 500,
+                step_increment: 10,
+                value: settings.get_int('snap-thumbnail-height')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        thumbHeightSpin.connect('value-changed', (widget) => {
+            settings.set_int('snap-thumbnail-height', widget.get_value());
+        });
+        thumbHeightRow.add_suffix(thumbHeightSpin);
+        snapPreviewGroup.add(thumbHeightRow);
+
+        const thumbPaddingRow = new Adw.ActionRow({
+            title: 'Thumbnail Padding',
+            subtitle: 'Inner padding of each thumbnail card (px)'
+        });
+        const thumbPaddingSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 0,
+                upper: 64,
+                step_increment: 2,
+                value: settings.get_int('snap-thumbnail-padding')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        thumbPaddingSpin.connect('value-changed', (widget) => {
+            settings.set_int('snap-thumbnail-padding', widget.get_value());
+        });
+        thumbPaddingRow.add_suffix(thumbPaddingSpin);
+        snapPreviewGroup.add(thumbPaddingRow);
+
+        const showLabelsRow = new Adw.ActionRow({
+            title: 'Show Labels',
+            subtitle: 'Show single-line window/app label under thumbnails'
+        });
+        const showLabelsSwitch = new Gtk.Switch({
+            active: settings.get_boolean('show-window-labels'),
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('show-window-labels', showLabelsSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        showLabelsRow.add_suffix(showLabelsSwitch);
+        showLabelsRow.activatable_widget = showLabelsSwitch;
+        snapPreviewGroup.add(showLabelsRow);
+
+        snapUiPage.add(snapPreviewGroup);
+        window.add(snapUiPage);
+
         // ===== LAYOUTS PAGE =====
         const layoutsPage = new Adw.PreferencesPage({
             title: 'Layouts',
@@ -539,6 +626,42 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         }
 
         layoutsPage.add(layoutsGroup);
+
+        // Custom Layouts Group
+        const customLayoutsGroup = new Adw.PreferencesGroup({
+            title: 'Custom Layouts',
+            description: 'Create and manage your own layouts'
+        });
+
+        // Create New Layout button
+        const createButton = new Gtk.Button({
+            label: 'Create New Layout',
+            css_classes: ['suggested-action'],
+            halign: Gtk.Align.START,
+            margin_top: 6,
+            margin_bottom: 6
+        });
+        createButton.connect('clicked', () => {
+            this._openLayoutEditor(window, settings, null);
+        });
+        customLayoutsGroup.add(createButton);
+
+        // List of custom layouts
+        this._customLayoutsBox = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 6
+        });
+        customLayoutsGroup.add(this._customLayoutsBox);
+
+        // Populate custom layouts list
+        this._refreshCustomLayoutsList(settings, window);
+
+        // Listen for settings changes to refresh list
+        settings.connect('changed::custom-layouts', () => {
+            this._refreshCustomLayoutsList(settings, window);
+        });
+
+        layoutsPage.add(customLayoutsGroup);
 
         window.add(layoutsPage);
 
@@ -688,5 +811,218 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         row.add_suffix(colorButton);
         return row;
+    }
+
+    /**
+     * Open the layout editor dialog
+     * @param {Adw.PreferencesWindow} parentWindow
+     * @param {Gio.Settings} settings
+     * @param {object|null} layout - Layout to edit, or null for new
+     */
+    _openLayoutEditor(parentWindow, settings, layout) {
+        const dialog = new LayoutEditorDialog({
+            transient_for: parentWindow
+        });
+
+        if (layout) {
+            dialog.editLayout(layout);
+        } else {
+            dialog.newFromTemplate('empty');
+        }
+
+        dialog.connect('layout-saved', (dlg, layoutJson) => {
+            try {
+                const savedLayout = JSON.parse(layoutJson);
+                this._saveCustomLayout(settings, savedLayout, layout);
+            } catch (e) {
+                log(`SnapKit Prefs: Error saving layout: ${e.message}`);
+            }
+        });
+
+        dialog.present();
+    }
+
+    /**
+     * Save a custom layout to settings
+     * @param {Gio.Settings} settings
+     * @param {object} layout - Layout to save
+     * @param {object|null} originalLayout - Original layout if editing
+     */
+    _saveCustomLayout(settings, layout, originalLayout) {
+        try {
+            const customLayoutsJson = settings.get_string('custom-layouts');
+            let customLayouts = [];
+
+            if (customLayoutsJson && customLayoutsJson !== '[]') {
+                customLayouts = JSON.parse(customLayoutsJson);
+            }
+
+            if (originalLayout) {
+                // Editing - find and replace
+                const index = customLayouts.findIndex(l =>
+                    l.name === originalLayout.name
+                );
+                if (index >= 0) {
+                    customLayouts[index] = layout;
+                } else {
+                    customLayouts.push(layout);
+                }
+            } else {
+                // New layout - check for name collision
+                const existing = customLayouts.findIndex(l => l.name === layout.name);
+                if (existing >= 0) {
+                    // Generate unique name
+                    let counter = 1;
+                    let newName = layout.name;
+                    while (customLayouts.some(l => l.name === newName)) {
+                        newName = `${layout.name} (${counter++})`;
+                    }
+                    layout.name = newName;
+                }
+                customLayouts.push(layout);
+            }
+
+            settings.set_string('custom-layouts', JSON.stringify(customLayouts));
+
+            // Auto-enable the new layout
+            const enabledLayouts = settings.get_strv('enabled-layouts');
+            if (!enabledLayouts.includes(layout.name)) {
+                enabledLayouts.push(layout.name);
+                settings.set_strv('enabled-layouts', enabledLayouts);
+            }
+        } catch (e) {
+            log(`SnapKit Prefs: Error saving custom layout: ${e.message}`);
+        }
+    }
+
+    /**
+     * Refresh the custom layouts list
+     * @param {Gio.Settings} settings
+     * @param {Adw.PreferencesWindow} window
+     */
+    _refreshCustomLayoutsList(settings, window) {
+        if (!this._customLayoutsBox) return;
+
+        // Clear existing children
+        let child = this._customLayoutsBox.get_first_child();
+        while (child) {
+            const next = child.get_next_sibling();
+            this._customLayoutsBox.remove(child);
+            child = next;
+        }
+
+        // Load custom layouts
+        try {
+            const customLayoutsJson = settings.get_string('custom-layouts');
+            if (!customLayoutsJson || customLayoutsJson === '[]') {
+                const emptyLabel = new Gtk.Label({
+                    label: 'No custom layouts yet. Click "Create New Layout" to get started.',
+                    css_classes: ['dim-label'],
+                    wrap: true,
+                    xalign: 0,
+                    margin_top: 6,
+                    margin_bottom: 6
+                });
+                this._customLayoutsBox.append(emptyLabel);
+                return;
+            }
+
+            const customLayouts = JSON.parse(customLayoutsJson);
+            const enabledLayouts = settings.get_strv('enabled-layouts');
+
+            for (const layout of customLayouts) {
+                const summary = getLayoutSummary(layout);
+
+                const row = new Adw.ActionRow({
+                    title: summary.name,
+                    subtitle: `${summary.zoneCount} zone${summary.zoneCount !== 1 ? 's' : ''}`
+                });
+
+                // Enable toggle
+                const toggle = new Gtk.Switch({
+                    active: enabledLayouts.includes(layout.name),
+                    valign: Gtk.Align.CENTER
+                });
+
+                toggle.connect('state-set', (widget, state) => {
+                    let layouts = settings.get_strv('enabled-layouts');
+                    if (state && !layouts.includes(layout.name)) {
+                        layouts.push(layout.name);
+                        settings.set_strv('enabled-layouts', layouts);
+                    } else if (!state && layouts.includes(layout.name)) {
+                        layouts = layouts.filter(id => id !== layout.name);
+                        settings.set_strv('enabled-layouts', layouts);
+                    }
+                    return false;
+                });
+
+                row.add_suffix(toggle);
+
+                // Edit button
+                const editButton = new Gtk.Button({
+                    icon_name: 'document-edit-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    css_classes: ['flat']
+                });
+                editButton.connect('clicked', () => {
+                    this._openLayoutEditor(window, settings, layout);
+                });
+                row.add_suffix(editButton);
+
+                // Delete button
+                const deleteButton = new Gtk.Button({
+                    icon_name: 'user-trash-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    css_classes: ['flat']
+                });
+                deleteButton.connect('clicked', () => {
+                    this._deleteCustomLayout(settings, layout, window);
+                });
+                row.add_suffix(deleteButton);
+
+                this._customLayoutsBox.append(row);
+            }
+        } catch (e) {
+            log(`SnapKit Prefs: Error loading custom layouts: ${e.message}`);
+        }
+    }
+
+    /**
+     * Delete a custom layout
+     * @param {Gio.Settings} settings
+     * @param {object} layout
+     * @param {Adw.PreferencesWindow} window
+     */
+    _deleteCustomLayout(settings, layout, window) {
+        const dialog = new Adw.MessageDialog({
+            heading: 'Delete Layout?',
+            body: `Are you sure you want to delete "${layout.name}"?`,
+            transient_for: window
+        });
+
+        dialog.add_response('cancel', 'Cancel');
+        dialog.add_response('delete', 'Delete');
+        dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE);
+
+        dialog.connect('response', (dlg, response) => {
+            if (response === 'delete') {
+                try {
+                    const customLayoutsJson = settings.get_string('custom-layouts');
+                    let customLayouts = JSON.parse(customLayoutsJson || '[]');
+
+                    customLayouts = customLayouts.filter(l => l.name !== layout.name);
+                    settings.set_string('custom-layouts', JSON.stringify(customLayouts));
+
+                    // Remove from enabled layouts
+                    let enabledLayouts = settings.get_strv('enabled-layouts');
+                    enabledLayouts = enabledLayouts.filter(id => id !== layout.name);
+                    settings.set_strv('enabled-layouts', enabledLayouts);
+                } catch (e) {
+                    log(`SnapKit Prefs: Error deleting layout: ${e.message}`);
+                }
+            }
+        });
+
+        dialog.present();
     }
 }

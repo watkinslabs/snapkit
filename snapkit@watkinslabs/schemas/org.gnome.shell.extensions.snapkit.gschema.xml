@@ -165,6 +165,33 @@
       <description>Maximum number of windows to show in SNAP MODE selector (4-20)</description>
     </key>
 
+    <key name="snap-thumbnail-width" type="i">
+      <default>400</default>
+      <range min="200" max="600"/>
+      <summary>Snap window thumbnail width</summary>
+      <description>Width of each window thumbnail in SNAP MODE selector (200-600px)</description>
+    </key>
+
+    <key name="snap-thumbnail-height" type="i">
+      <default>320</default>
+      <range min="180" max="500"/>
+      <summary>Snap window thumbnail height</summary>
+      <description>Height of each window thumbnail in SNAP MODE selector (180-500px)</description>
+    </key>
+
+    <key name="snap-thumbnail-padding" type="i">
+      <default>16</default>
+      <range min="0" max="64"/>
+      <summary>Snap window thumbnail padding</summary>
+      <description>Padding inside each window thumbnail card in SNAP MODE selector (0-64px)</description>
+    </key>
+
+    <key name="show-window-labels" type="b">
+      <default>true</default>
+      <summary>Show window labels in SNAP MODE</summary>
+      <description>Show a single-line window/app label under thumbnails in SNAP MODE selector</description>
+    </key>
+
     <!-- Performance Settings -->
     <key name="motion-throttle-interval" type="i">
       <default>16</default>
@@ -184,6 +211,49 @@
       <default>'[]'</default>
       <summary>Custom layouts</summary>
       <description>JSON array of custom layout definitions</description>
+    </key>
+
+    <!-- Snap Preview Settings -->
+    <key name="snap-preview-enabled" type="b">
+      <default>true</default>
+      <summary>Enable snap preview grid</summary>
+      <description>Show snap grid overlay when dragging windows</description>
+    </key>
+
+    <key name="snap-preview-layout" type="s">
+      <default>'half-split'</default>
+      <summary>Default snap preview layout</summary>
+      <description>Layout to use for snap preview grid</description>
+    </key>
+
+    <key name="snap-preview-auto-snap" type="b">
+      <default>true</default>
+      <summary>Auto-snap on release</summary>
+      <description>Automatically snap window when released over a zone</description>
+    </key>
+
+    <key name="snap-preview-grid-color" type="s">
+      <default>'rgba(100, 150, 255, 0.3)'</default>
+      <summary>Snap grid zone color</summary>
+      <description>Color of snap zones in the preview grid</description>
+    </key>
+
+    <key name="snap-preview-grid-border-color" type="s">
+      <default>'rgba(100, 150, 255, 0.6)'</default>
+      <summary>Snap grid border color</summary>
+      <description>Color of zone borders in the preview grid</description>
+    </key>
+
+    <key name="snap-preview-highlight-color" type="s">
+      <default>'rgba(100, 200, 255, 0.5)'</default>
+      <summary>Snap zone highlight color</summary>
+      <description>Color of highlighted zone when window is over it</description>
+    </key>
+
+    <key name="snap-disable-key" type="s">
+      <default>'space'</default>
+      <summary>Key to disable snap</summary>
+      <description>Hold this key while dragging to temporarily disable snap preview</description>
     </key>
 
   </schema>
