@@ -429,23 +429,23 @@ export const WindowSelector = GObject.registerClass({
                border: 2px solid rgba(38, 162, 105, 0.8);
                border-radius: 12px;
                padding: 16px;
-               width: 220px;
-               height: 160px;`;
+               width: 400px;
+               height: 320px;`;
         } else if (!canFit) {
             // Window won't fit - show with warning style
             baseStyle = `background-color: rgba(192, 28, 40, 0.3);
                border: 2px solid rgba(192, 28, 40, 0.7);
                border-radius: 12px;
                padding: 16px;
-               width: 220px;
-               height: 160px;`;
+               width: 400px;
+               height: 320px;`;
         } else {
             baseStyle = `background-color: rgba(255, 255, 255, 0.08);
                border: 1px solid rgba(255, 255, 255, 0.15);
                border-radius: 12px;
                padding: 16px;
-               width: 220px;
-               height: 160px;`;
+               width: 400px;
+               height: 320px;`;
         }
 
         button.set_style(baseStyle);
@@ -554,8 +554,8 @@ export const WindowSelector = GObject.registerClass({
                     border: 2px solid rgba(192, 97, 203, 0.9);
                     border-radius: 12px;
                     padding: 16px;
-                    width: 220px;
-                    height: 160px;
+                    width: 400px;
+                    height: 320px;
                 `);
             } else if (!canFit) {
                 // Warning hover - slightly brighter red
@@ -564,8 +564,8 @@ export const WindowSelector = GObject.registerClass({
                     border: 2px solid rgba(192, 28, 40, 0.9);
                     border-radius: 12px;
                     padding: 16px;
-                    width: 220px;
-                    height: 160px;
+                    width: 400px;
+                    height: 320px;
                 `);
             } else {
                 button.set_style(`
@@ -573,8 +573,8 @@ export const WindowSelector = GObject.registerClass({
                     border: 2px solid rgba(53, 132, 228, 0.8);
                     border-radius: 12px;
                     padding: 16px;
-                    width: 220px;
-                    height: 160px;
+                    width: 400px;
+                    height: 320px;
                 `);
             }
         }));
@@ -603,8 +603,8 @@ export const WindowSelector = GObject.registerClass({
             if (window.minimized) {
                 const app = Shell.WindowTracker.get_default().get_window_app(window);
                 if (app) {
-                    const icon = app.create_icon_texture(64);
-                    icon.set_size(64, 64);
+                    const icon = app.create_icon_texture(128);
+                    icon.set_size(128, 128);
                     return icon;
                 }
                 return null;
@@ -615,8 +615,8 @@ export const WindowSelector = GObject.registerClass({
                 // Fallback to app icon
                 const app = Shell.WindowTracker.get_default().get_window_app(window);
                 if (app) {
-                    const icon = app.create_icon_texture(64);
-                    icon.set_size(64, 64);
+                    const icon = app.create_icon_texture(128);
+                    icon.set_size(128, 128);
                     return icon;
                 }
                 return null;
@@ -627,9 +627,11 @@ export const WindowSelector = GObject.registerClass({
                 reactive: false
             });
 
-            // Scale to fit 200x100 preview
+            // Scale to fit thumbnail area - large preview
+            const thumbWidth = 360;
+            const thumbHeight = 240;
             const [width, height] = windowActor.get_size();
-            const scale = Math.min(200 / width, 100 / height);
+            const scale = Math.min(thumbWidth / width, thumbHeight / height);
             clone.set_scale(scale, scale);
             clone.set_size(width * scale, height * scale);
 
