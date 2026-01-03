@@ -1,10 +1,12 @@
 # SnapKit
 
-A GNOME Shell extension that brings Windows 11-style snap layouts to Linux.
+A GNOME Shell extension that brings Windows 11-style snap layouts to Linux with enforced tiling.
 
 ## Overview
 
 SnapKit provides a window snapping experience similar to Windows 11's Snap Layouts feature. Move your mouse to the top edge of the screen to reveal a layout picker, select a zone, and snap windows into predefined arrangements.
+
+Unlike basic window snapping, SnapKit acts as an enforcing tile manager. Once windows are snapped into a layout, they maintain their grid relationship. Resize one window and adjacent windows automatically adjust to preserve the layout structure. No gaps, no overlaps - the grid stays intact.
 
 This is an early implementation. The goal is to replicate the intuitive window management that Windows 11 introduced, making it available for GNOME desktop users.
 
@@ -14,7 +16,7 @@ This is an early implementation. The goal is to replicate the intuitive window m
 - **Zone Selection**: Hover at screen edge to reveal layout picker, click a zone to enter snap mode
 - **Window Selector**: Visual overlay showing available windows with thumbnails
 - **Multi-Monitor Support**: Works with primary, current, or all monitors
-- **Tiled Resize**: Windows snapped together resize as a group - drag a shared border and adjacent windows adjust automatically
+- **Enforced Tiling**: Windows snapped together maintain their grid layout - drag a shared border and adjacent windows adjust automatically, preserving the tile structure
 - **Minimized Window Support**: Snap minimized windows directly from the selector
 - **Configurable Trigger**: Adjustable trigger zone size, position, and push delay
 
@@ -52,12 +54,13 @@ This opens a sandboxed GNOME Shell window where you can test the extension witho
 5. Repeat for additional zones, or click "Skip This Zone" to leave a zone empty
 6. Press ESC or click the background to cancel
 
-### Tiled Resize
+### Enforced Tiling
 
-Once windows are snapped to a layout, they behave as a tile group:
+Once windows are snapped to a layout, SnapKit enforces the grid structure:
 - Drag a shared border between windows to resize them together
-- The resize cascades: if window A's edge affects window B, and B shares an edge with C, then C also adjusts
-- Drag a window to move it, which removes it from the tile group
+- The resize cascades through the layout: if window A's edge affects window B, and B shares an edge with C, then C also adjusts
+- The grid remains gap-free and overlap-free
+- Drag a window away to remove it from the tile group and regain independent control
 
 ## Configuration
 
