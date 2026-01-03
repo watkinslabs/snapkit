@@ -2,6 +2,10 @@
 
 A GNOME Shell extension that brings Windows 11-style snap layouts to Linux with enforced tiling.
 
+![Layout Picker](preview1.png)
+
+![Window Selector](preview2.png)
+
 ## Overview
 
 SnapKit provides a window snapping experience similar to Windows 11's Snap Layouts feature. Move your mouse to the top edge of the screen to reveal a layout picker, select a zone, and snap windows into predefined arrangements.
@@ -71,11 +75,22 @@ gnome-extensions prefs snapkit@watkinslabs
 ```
 
 Available settings:
-- Trigger edge position (top, bottom, left, right)
+
+**Appearance**
+- Overlay scale (adjust size of layout picker)
+- Zone colors (active, inactive, hover states)
+- Border colors and styles
+
+**Behavior**
+- Trigger edge orientation (top, bottom, left, right)
 - Trigger zone height
 - Push delay before opening
-- Auto-hide behavior
+- Auto-hide (hide trigger zone when not in use)
 - Monitor mode (primary, current, all)
+
+**Advanced**
+- Motion throttle interval
+- Snap mode timeout
 - Debug mode for troubleshooting
 
 ## Layouts
