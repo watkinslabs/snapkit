@@ -30,8 +30,8 @@ export const LayoutOverlay = GObject.registerClass({
         this._hoveredZone = null;
         this._currentMonitor = Main.layoutManager.primaryMonitor;
 
-        // Add as chrome to ensure it's always on top of windows
-        Main.layoutManager.addChrome(this, {
+        // Add as TOP chrome to ensure it's always above all windows including maximized
+        Main.layoutManager.addTopChrome(this, {
             affectsInputRegion: true,
             affectsStruts: false,
             trackFullscreen: false
@@ -400,12 +400,23 @@ export const LayoutOverlay = GObject.registerClass({
         const relX = (x - containerX) / containerWidth;
         const relY = (y - containerY) / containerHeight;
 
-        // Find which zone the mouse is over
-        const zone = this._layoutManager.findZoneAtPoint(layoutBox._layout, relX, relY);
+        // Find which zone the mouse is over using zones array (normalized coords)
+        const layout = layoutBox._layout;
+        let foundZone = null;
 
-        if (zone !== this._hoveredZone) {
-            this._hoveredZone = zone;
-            this._updateZoneHighlight(layoutBox, zone);
+        if (layout.zones && Array.isArray(layout.zones)) {
+            for (const zone of layout.zones) {
+                if (relX >= zone.x && relX < zone.x + zone.width &&
+                    relY >= zone.y && relY < zone.y + zone.height) {
+                    foundZone = zone;
+                    break;
+                }
+            }
+        }
+
+        if (foundZone !== this._hoveredZone) {
+            this._hoveredZone = foundZone;
+            this._updateZoneHighlight(layoutBox, foundZone);
         }
     }
 
@@ -415,8 +426,10 @@ export const LayoutOverlay = GObject.registerClass({
             // Use the hovered zone if available, otherwise default to the first zone
             const zone = this._hoveredZone || (layoutBox._layout.zones && layoutBox._layout.zones[0]);
             if (zone) {
-                this._debug(`Emitting zone-selected for layout ${layoutBox._layout.id}, zone ${zone.id}`);
-                this.emit('zone-selected', layoutBox._layout.id, zone);
+                // Get layout ID - use 'name' for full-spec layouts, 'id' for simple layouts
+                const layoutId = this._layoutManager.getLayoutId(layoutBox._layout);
+                this._debug(`Emitting zone-selected for layout ${layoutId}, zone ${zone.id}`);
+                this.emit('zone-selected', layoutId, zone);
             } else {
                 this._debug(`ERROR: Layout has no zones`);
             }

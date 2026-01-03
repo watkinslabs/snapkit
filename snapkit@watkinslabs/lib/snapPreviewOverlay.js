@@ -24,17 +24,31 @@ export class SnapPreviewOverlay {
 
     /**
      * Show the snap preview on all monitors
-     * @param {string} layoutId - Layout to show
+     * @param {string} layoutId - Layout to show (optional, uses first enabled if not specified)
      */
     show(layoutId = null) {
         if (this._visible) return;
 
-        const layout = layoutId
-            ? this._layoutManager.getLayout(layoutId)
-            : this._layoutManager.getLayout(this._settings.get_string('snap-preview-layout'));
+        let layout = null;
+
+        if (layoutId) {
+            layout = this._layoutManager.getLayout(layoutId);
+        } else {
+            // Use the first enabled layout
+            const enabledLayouts = this._layoutManager.getEnabledLayouts();
+            if (enabledLayouts.length > 0) {
+                layout = enabledLayouts[0];
+            }
+        }
 
         if (!layout) {
             log('SnapKit SnapPreview: No layout found');
+            return;
+        }
+
+        // Make sure layout has zones array
+        if (!layout.zones || !Array.isArray(layout.zones)) {
+            log('SnapKit SnapPreview: Layout has no zones');
             return;
         }
 

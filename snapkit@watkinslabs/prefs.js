@@ -452,6 +452,88 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         behaviorPage.add(snapModeGroup);
 
+        // Snap Preview Group
+        const snapPreviewGroup = new Adw.PreferencesGroup({
+            title: 'Snap Preview (Drag to Snap)',
+            description: 'Show snap grid when dragging windows'
+        });
+
+        // Enable snap preview
+        const snapPreviewEnabledRow = new Adw.ActionRow({
+            title: 'Enable Snap Preview',
+            subtitle: 'Show snap grid overlay when dragging windows'
+        });
+        const snapPreviewEnabledSwitch = new Gtk.Switch({
+            active: settings.get_boolean('snap-preview-enabled'),
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('snap-preview-enabled', snapPreviewEnabledSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        snapPreviewEnabledRow.add_suffix(snapPreviewEnabledSwitch);
+        snapPreviewEnabledRow.activatable_widget = snapPreviewEnabledSwitch;
+        snapPreviewGroup.add(snapPreviewEnabledRow);
+
+        // Auto-snap on release
+        const autoSnapRow = new Adw.ActionRow({
+            title: 'Auto-Snap on Release',
+            subtitle: 'Automatically snap window when released over a zone'
+        });
+        const autoSnapSwitch = new Gtk.Switch({
+            active: settings.get_boolean('snap-preview-auto-snap'),
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('snap-preview-auto-snap', autoSnapSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        autoSnapRow.add_suffix(autoSnapSwitch);
+        autoSnapRow.activatable_widget = autoSnapSwitch;
+        snapPreviewGroup.add(autoSnapRow);
+
+        // Snap disable key
+        const disableKeyRow = new Adw.ComboRow({
+            title: 'Snap Disable Key',
+            subtitle: 'Hold this key while dragging to disable snap'
+        });
+        const disableKeyModel = new Gtk.StringList();
+        disableKeyModel.append('Ctrl');
+        disableKeyModel.append('Alt');
+        disableKeyModel.append('Shift');
+        disableKeyModel.append('Super');
+        disableKeyRow.set_model(disableKeyModel);
+
+        const currentDisableKey = settings.get_string('snap-disable-key');
+        const disableKeyMap = {'ctrl': 0, 'alt': 1, 'shift': 2, 'super': 3};
+        disableKeyRow.set_selected(disableKeyMap[currentDisableKey] ?? 0);
+
+        disableKeyRow.connect('notify::selected', (widget) => {
+            const keys = ['ctrl', 'alt', 'shift', 'super'];
+            settings.set_string('snap-disable-key', keys[widget.selected]);
+        });
+        snapPreviewGroup.add(disableKeyRow);
+
+        // Grid color
+        snapPreviewGroup.add(this._createColorRow(
+            settings,
+            'snap-preview-grid-color',
+            'Grid Zone Color',
+            'Background color of snap zones'
+        ));
+
+        // Grid border color
+        snapPreviewGroup.add(this._createColorRow(
+            settings,
+            'snap-preview-grid-border-color',
+            'Grid Border Color',
+            'Border color of snap zones'
+        ));
+
+        // Highlight color
+        snapPreviewGroup.add(this._createColorRow(
+            settings,
+            'snap-preview-highlight-color',
+            'Highlight Color',
+            'Color when window is over a zone'
+        ));
+
+        behaviorPage.add(snapPreviewGroup);
+
         // Performance Group
         const performanceGroup = new Adw.PreferencesGroup({
             title: 'Performance',
@@ -491,7 +573,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
             icon_name: 'applications-graphics-symbolic'
         });
 
-        const snapPreviewGroup = new Adw.PreferencesGroup({
+        const windowPreviewGroup = new Adw.PreferencesGroup({
             title: 'Window Previews',
             description: 'Control size and labels of SNAP MODE thumbnails'
         });
@@ -513,7 +595,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
             settings.set_int('snap-thumbnail-width', widget.get_value());
         });
         thumbWidthRow.add_suffix(thumbWidthSpin);
-        snapPreviewGroup.add(thumbWidthRow);
+        windowPreviewGroup.add(thumbWidthRow);
 
         const thumbHeightRow = new Adw.ActionRow({
             title: 'Thumbnail Height',
@@ -532,7 +614,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
             settings.set_int('snap-thumbnail-height', widget.get_value());
         });
         thumbHeightRow.add_suffix(thumbHeightSpin);
-        snapPreviewGroup.add(thumbHeightRow);
+        windowPreviewGroup.add(thumbHeightRow);
 
         const thumbPaddingRow = new Adw.ActionRow({
             title: 'Thumbnail Padding',
@@ -551,7 +633,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
             settings.set_int('snap-thumbnail-padding', widget.get_value());
         });
         thumbPaddingRow.add_suffix(thumbPaddingSpin);
-        snapPreviewGroup.add(thumbPaddingRow);
+        windowPreviewGroup.add(thumbPaddingRow);
 
         const showLabelsRow = new Adw.ActionRow({
             title: 'Show Labels',
@@ -564,9 +646,9 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         settings.bind('show-window-labels', showLabelsSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
         showLabelsRow.add_suffix(showLabelsSwitch);
         showLabelsRow.activatable_widget = showLabelsSwitch;
-        snapPreviewGroup.add(showLabelsRow);
+        windowPreviewGroup.add(showLabelsRow);
 
-        snapUiPage.add(snapPreviewGroup);
+        snapUiPage.add(windowPreviewGroup);
         window.add(snapUiPage);
 
         // ===== LAYOUTS PAGE =====
