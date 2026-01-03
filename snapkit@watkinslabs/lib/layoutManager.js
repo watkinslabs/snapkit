@@ -152,6 +152,117 @@ export class LayoutManager {
     }
 
     /**
+     * Get zones with normalized (0-1) coordinates for display/SNAP MODE.
+     * Works with both simple and full-spec layouts.
+     * @param {object} layout
+     * @returns {Array<{id: string, x: number, y: number, width: number, height: number}>}
+     */
+    getZonesForDisplay(layout) {
+        if (!layout) return [];
+
+        // Simple format - already has zones array
+        if (!isFullSpecLayout(layout)) {
+            return layout.zones || [];
+        }
+
+        // Full-spec format - traverse tree to extract leaf positions
+        const zones = [];
+        this._traverseForZones(layout.root, 0, 0, 1, 1, zones);
+        return zones;
+    }
+
+    /**
+     * Recursively traverse the layout tree to extract zone positions.
+     * @private
+     */
+    _traverseForZones(node, x, y, width, height, zones) {
+        if (!node) return;
+
+        if (node.type === 'leaf') {
+            zones.push({
+                id: node.id,
+                x: x,
+                y: y,
+                width: width,
+                height: height
+            });
+            return;
+        }
+
+        if (node.type === 'split' && node.children && node.children.length > 0) {
+            const isCol = node.dir === 'col';
+
+            // Calculate sizes for children
+            const childSizes = [];
+            let totalFrac = 0;
+
+            for (const child of node.children) {
+                if (child.size && child.size.kind === 'frac' && child.size.value) {
+                    childSizes.push({ frac: child.size.value });
+                    totalFrac += child.size.value;
+                } else {
+                    childSizes.push({ frac: null });
+                }
+            }
+
+            // Normalize fractions
+            const numChildren = node.children.length;
+            let normalizedSizes = [];
+
+            if (totalFrac > 0) {
+                let remainingFrac = 1.0;
+                let unspecifiedCount = 0;
+
+                for (const cs of childSizes) {
+                    if (cs.frac !== null) {
+                        remainingFrac -= cs.frac / totalFrac;
+                    } else {
+                        unspecifiedCount++;
+                    }
+                }
+
+                for (const cs of childSizes) {
+                    if (cs.frac !== null) {
+                        normalizedSizes.push(cs.frac / totalFrac);
+                    } else if (unspecifiedCount > 0) {
+                        normalizedSizes.push(remainingFrac / unspecifiedCount);
+                    } else {
+                        normalizedSizes.push(1 / numChildren);
+                    }
+                }
+            } else {
+                for (let i = 0; i < numChildren; i++) {
+                    normalizedSizes.push(1 / numChildren);
+                }
+            }
+
+            // Traverse children
+            let offset = 0;
+            for (let i = 0; i < node.children.length; i++) {
+                const child = node.children[i];
+                const size = normalizedSizes[i];
+
+                let childX, childY, childW, childH;
+
+                if (isCol) {
+                    childX = x + offset * width;
+                    childY = y;
+                    childW = size * width;
+                    childH = height;
+                } else {
+                    childX = x;
+                    childY = y + offset * height;
+                    childW = width;
+                    childH = size * height;
+                }
+                offset += size;
+
+                this._traverseForZones(child, childX, childY, childW, childH, zones);
+            }
+        }
+    }
+
+    /**
      * Resolve a layout to pixel rectangles
      *
      * @param {string|object} layoutOrId - Layout object or ID
@@ -276,8 +387,18 @@ export class LayoutManager {
      * @returns {boolean} - true if override was updated
      */
     handleResize(layoutId, zoneId, edge, deltaPixels, workArea, monitor) {
+        this._debug(`handleResize: layoutId=${layoutId}, zoneId=${zoneId}, edge=${edge}, delta=${deltaPixels}`);
+
         const layout = this._layouts.get(layoutId);
-        if (!layout || !isFullSpecLayout(layout)) {
+        if (!layout) {
+            this._debug(`Layout not found: ${layoutId}`);
+            return false;
+        }
+
+        const isFullSpec = isFullSpecLayout(layout);
+        this._debug(`Layout found: isFullSpec=${isFullSpec}, schema_version=${layout.schema_version}, has root=${!!layout.root}`);
+
+        if (!isFullSpec) {
             this._debug(`Cannot handle resize for non-full-spec layout: ${layoutId}`);
             return false;
         }

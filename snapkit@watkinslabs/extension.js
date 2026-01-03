@@ -43,10 +43,20 @@ export default class SnapKitExtension extends Extension {
         this._pushTimeoutId = null;
         this._lastMotionTime = 0;         // For motion event throttling
 
+        // Per-monitor active layout (monitorIndex -> layoutId)
+        this._monitorLayouts = new Map();
+
+        // Drag polling for cursor position
+        this._dragPollId = null;
+
+        // Trigger zone polling (for when windows block motion events)
+        this._triggerPollId = null;
+
         // SNAP MODE state
         this._snapModeLayout = null;      // Current layout in SNAP MODE
         this._snapModeZones = [];         // Zones in the current layout
         this._snapModeCurrentIndex = 0;   // Current zone index
+        this._snapModeFilledZones = new Set(); // Track filled zone IDs
         this._snapModeMonitor = null;     // Monitor where overlay was shown
         this._windowSelector = null;      // Window selector overlay
         this._positionedWindows = new Set();  // Set of windows already positioned
@@ -59,6 +69,43 @@ export default class SnapKitExtension extends Extension {
         }
     }
 
+    /**
+     * Load per-monitor layout assignments from settings
+     */
+    _loadMonitorLayouts() {
+        try {
+            const savedLayouts = this._settings.get_string('monitor-layouts');
+            const layoutsObj = JSON.parse(savedLayouts);
+
+            this._monitorLayouts.clear();
+            for (const [monitorIndex, layoutId] of Object.entries(layoutsObj)) {
+                this._monitorLayouts.set(parseInt(monitorIndex), layoutId);
+                this._debug(`Loaded layout ${layoutId} for monitor ${monitorIndex}`);
+            }
+            this._debug(`Loaded ${this._monitorLayouts.size} monitor layout assignments`);
+        } catch (e) {
+            this._debug(`Error loading monitor layouts: ${e.message}`);
+            this._monitorLayouts.clear();
+        }
+    }
+
+    /**
+     * Save per-monitor layout assignments to settings
+     */
+    _saveMonitorLayouts() {
+        try {
+            const layoutsObj = {};
+            for (const [monitorIndex, layoutId] of this._monitorLayouts) {
+                layoutsObj[monitorIndex] = layoutId;
+            }
+            const json = JSON.stringify(layoutsObj);
+            this._settings.set_string('monitor-layouts', json);
+            this._debug(`Saved monitor layouts: ${json}`);
+        } catch (e) {
+            this._debug(`Error saving monitor layouts: ${e.message}`);
+        }
+    }
+
     enable() {
         this._debug('Enabling extension');
 
@@ -68,11 +115,26 @@ export default class SnapKitExtension extends Extension {
             this._settings = this.getSettings();
             this._debug('Settings loaded');
 
+            // Load saved per-monitor layouts from settings
+            this._loadMonitorLayouts();
+
             // Listen for settings changes
             this._settingsChangedId = this._settings.connect('changed', (settings, key) => {
                 this._debug(`Setting changed: ${key}`);
 
-                if (key === 'monitor-mode') {
+                if (key === 'custom-layouts' || key === 'enabled-layouts') {
+                    this._debug('Layouts changed, reloading layout manager');
+                    if (this._layoutManager) {
+                        this._layoutManager.reload();
+                    }
+                    // Recreate overlays to pick up new layouts
+                    this._createOverlays();
+                    // Show hitboxes if auto-hide is disabled
+                    const autoHideEnabled = this._settings.get_boolean('auto-hide-enabled');
+                    if (!autoHideEnabled && this._overlayState === OverlayState.CLOSED) {
+                        this._showHitboxes();
+                    }
+                } else if (key === 'monitor-mode') {
                     this._debug('Monitor mode changed, recreating overlays');
 
                     // Exit SNAP MODE if active to prevent state corruption
@@ -171,6 +233,9 @@ export default class SnapKitExtension extends Extension {
                 this._onMotionEvent.bind(this));
             this._debug('Motion events connected');
 
+            // Also poll mouse position periodically (for when windows block motion events)
+            this._startTriggerPolling();
+
             this._debug('Extension enabled successfully');
         } catch (e) {
             this._debug(`ERROR in enable(): ${e.message}`);
@@ -192,6 +257,12 @@ export default class SnapKitExtension extends Extension {
             GLib.source_remove(this._snapModeTimeoutId);
             this._snapModeTimeoutId = null;
         }
+
+        // Clear drag polling
+        this._stopDragPolling();
+
+        // Clear trigger polling
+        this._stopTriggerPolling();
 
         // Restore GNOME edge tiling if we modified it
         this._restoreMutterEdgeTiling();
@@ -263,26 +334,199 @@ export default class SnapKitExtension extends Extension {
             this._debug('Window drag detected, starting motion tracking');
             this._isDragging = true;
             this._draggedWindow = window;
+            this._snapDisabledForCurrentDrag = false; // Reset snap disable flag
+
+            // Get the monitor where the window is
+            const windowRect = window.get_frame_rect();
+            const monitor = Main.layoutManager.monitors.find(m =>
+                windowRect.x >= m.x && windowRect.x < m.x + m.width &&
+                windowRect.y >= m.y && windowRect.y < m.y + m.height
+            ) || Main.layoutManager.primaryMonitor;
+
+            // Get the layout for this monitor
+            const layoutId = this._monitorLayouts.get(monitor.index);
+            this._debug(`Monitor ${monitor.index} has layout: ${layoutId || 'none (using default)'}`);
 
             // Show snap preview if enabled
             if (this._settings.get_boolean('snap-preview-enabled') && this._snapPreview) {
                 // Check if snap-disable key is held
                 if (!this._isSnapDisableKeyHeld()) {
-                    this._snapPreview.show();
-                    this._debug('Snap preview shown');
+                    this._snapPreview.show(layoutId);
+                    this._debug(`Snap preview shown with layout: ${layoutId || 'default'}`);
+
+                    // Start polling cursor position during drag
+                    // (motion events don't fire during grab operations)
+                    this._startDragPolling();
+
+                    // Listen for key presses to detect Escape/Space during drag
+                    this._startDragKeyListener();
                 }
             }
         }
     }
 
+    _startDragKeyListener() {
+        if (this._dragKeyPressId) {
+            global.stage.disconnect(this._dragKeyPressId);
+        }
+
+        this._dragKeyPressId = global.stage.connect('key-press-event', (actor, event) => {
+            if (!this._isDragging || this._snapDisabledForCurrentDrag) {
+                return Clutter.EVENT_PROPAGATE;
+            }
+
+            const symbol = event.get_key_symbol();
+            const disableKey = this._settings.get_string('snap-disable-key');
+
+            let shouldDisable = false;
+
+            if (disableKey === 'escape' && symbol === Clutter.KEY_Escape) {
+                shouldDisable = true;
+            } else if (disableKey === 'space' && symbol === Clutter.KEY_space) {
+                shouldDisable = true;
+            }
+
+            if (shouldDisable) {
+                this._debug(`Snap disable key pressed (${disableKey}), hiding snap preview`);
+                this._snapPreview.hide();
+                this._snapDisabledForCurrentDrag = true;
+                return Clutter.EVENT_STOP;
+            }
+
+            return Clutter.EVENT_PROPAGATE;
+        });
+    }
+
+    _stopDragKeyListener() {
+        if (this._dragKeyPressId) {
+            global.stage.disconnect(this._dragKeyPressId);
+            this._dragKeyPressId = null;
+        }
+    }
+
+    _startDragPolling() {
+        if (this._dragPollId) {
+            GLib.source_remove(this._dragPollId);
+        }
+
+        this._dragPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
+            if (!this._isDragging || !this._snapPreview) {
+                this._dragPollId = null;
+                return GLib.SOURCE_REMOVE;
+            }
+
+            // Check if disable key is pressed - immediately exit drag snap mode
+            if (this._isSnapDisableKeyHeld()) {
+                this._debug(`Snap disable key pressed during drag, hiding snap preview`);
+                this._snapPreview.hide();
+                this._snapDisabledForCurrentDrag = true;
+                return GLib.SOURCE_CONTINUE;
+            }
+
+            // Skip highlighting if snap was disabled for this drag
+            if (this._snapDisabledForCurrentDrag) {
+                return GLib.SOURCE_CONTINUE;
+            }
+
+            const [x, y] = global.get_pointer();
+            const zone = this._snapPreview.updateHighlight(x, y);
+
+            if (zone) {
+                this._debug(`Drag poll: zone ${zone.id} at (${x}, ${y})`);
+            }
+
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopDragPolling() {
+        if (this._dragPollId) {
+            GLib.source_remove(this._dragPollId);
+            this._dragPollId = null;
+        }
+    }
+
+    _startTriggerPolling() {
+        if (this._triggerPollId) {
+            GLib.source_remove(this._triggerPollId);
+        }
+
+        // Poll every 100ms to detect trigger zone entry even when windows block events
+        this._triggerPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            // Skip if already in OPEN state or SNAP MODE
+            if (this._overlayState !== OverlayState.CLOSED) {
+                return GLib.SOURCE_CONTINUE;
+            }
+
+            // Skip if dragging
+            if (this._isDragging) {
+                return GLib.SOURCE_CONTINUE;
+            }
+
+            const [x, y] = global.get_pointer();
+            const triggerSize = this._settings.get_int('trigger-zone-height');
+            const triggerEdge = this._settings.get_string('trigger-edge');
+
+            // Check each monitor
+            for (const monitor of Main.layoutManager.monitors) {
+                if (this._isInTriggerZone(x, y, monitor, triggerSize, triggerEdge)) {
+                    const overlay = this._overlays.get(monitor.index);
+                    if (overlay && !overlay.visible) {
+                        this._debug(`Trigger poll: mouse in trigger zone, showing hitbox`);
+                        overlay.showHitbox(monitor);
+                        this._hideOtherMonitorOverlays(monitor.index);
+                    }
+
+                    // Start push timer if not already running
+                    if (!this._pushTimeoutId) {
+                        const pushTime = this._settings.get_int('push-time');
+                        if (pushTime > 0) {
+                            this._pushTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, pushTime, () => {
+                                this._pushTimeoutId = null;
+                                this._transitionToOpen(monitor);
+                                return GLib.SOURCE_REMOVE;
+                            });
+                        } else {
+                            this._transitionToOpen(monitor);
+                        }
+                    }
+                    break;
+                }
+            }
+
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopTriggerPolling() {
+        if (this._triggerPollId) {
+            GLib.source_remove(this._triggerPollId);
+            this._triggerPollId = null;
+        }
+    }
+
     _onGrabEnd(display, window, grabOp) {
         if (grabOp === Meta.GrabOp.MOVING) {
-            // Check for auto-snap before hiding
-            if (this._snapPreview && this._settings.get_boolean('snap-preview-auto-snap')) {
+            this._debug(`Grab end - checking auto-snap`);
+
+            // Stop polling and key listener
+            this._stopDragPolling();
+            this._stopDragKeyListener();
+
+            // Check for auto-snap before hiding (skip if snap was disabled during this drag)
+            if (this._snapPreview && this._settings.get_boolean('snap-preview-auto-snap') && !this._snapDisabledForCurrentDrag) {
                 const zone = this._snapPreview.getHighlightedZone();
+                this._debug(`Highlighted zone: ${zone ? zone.id : 'none'}, has windowRect: ${zone?.windowRect ? 'yes' : 'no'}`);
+
                 if (zone && this._draggedWindow) {
                     this._debug(`Auto-snapping to zone: ${zone.id}`);
                     this._autoSnapToZone(this._draggedWindow, zone);
+                }
+            } else {
+                if (this._snapDisabledForCurrentDrag) {
+                    this._debug(`Auto-snap skipped - snap was disabled during this drag`);
+                } else {
+                    this._debug(`Auto-snap disabled or no preview: preview=${!!this._snapPreview}, enabled=${this._settings.get_boolean('snap-preview-auto-snap')}`);
                 }
             }
 
@@ -293,6 +537,7 @@ export default class SnapKitExtension extends Extension {
 
             this._isDragging = false;
             this._draggedWindow = null;
+            this._snapDisabledForCurrentDrag = false; // Reset flag
 
             // Hide all overlays
             this._hideOverlays();
@@ -304,16 +549,14 @@ export default class SnapKitExtension extends Extension {
      */
     _isSnapDisableKeyHeld() {
         try {
-            const seat = Clutter.get_default_backend().get_default_seat();
-            const keymap = seat.get_keymap();
-            const modState = keymap.get_modifier_state();
-
             const disableKey = this._settings.get_string('snap-disable-key');
+
+            // Get current modifier state from global display
+            const [, , modState] = global.get_pointer();
 
             // Check common keys
             if (disableKey === 'space') {
-                // Space is tricky - check via keyboard state
-                // For now, just return false (space detection requires more work)
+                // Space is not a modifier - can't easily detect
                 return false;
             } else if (disableKey === 'ctrl') {
                 return (modState & Clutter.ModifierType.CONTROL_MASK) !== 0;
@@ -334,9 +577,16 @@ export default class SnapKitExtension extends Extension {
      * Auto-snap a window to a zone
      */
     _autoSnapToZone(window, zone) {
-        if (!zone.windowRect) return;
+        this._debug(`_autoSnapToZone called for zone ${zone.id}`);
+
+        if (!zone.windowRect) {
+            this._debug(`Zone ${zone.id} has no windowRect, cannot snap`);
+            return;
+        }
 
         const rect = zone.windowRect;
+        this._debug(`Snapping window to ${rect.x},${rect.y} ${rect.width}x${rect.height}`);
+
         try {
             window.move_resize_frame(
                 true,
@@ -345,6 +595,7 @@ export default class SnapKitExtension extends Extension {
                 Math.round(rect.width),
                 Math.round(rect.height)
             );
+            this._debug(`Window moved successfully`);
 
             // Register with tile manager
             if (this._tileManager && this._snapPreview) {
@@ -361,6 +612,7 @@ export default class SnapKitExtension extends Extension {
                             monitor.index,
                             layout
                         );
+                        this._debug(`Window registered with tile manager`);
                     }
                 }
             }
@@ -395,7 +647,16 @@ export default class SnapKitExtension extends Extension {
 
             // Update snap preview highlight if dragging
             if (this._isDragging && this._snapPreview) {
-                this._snapPreview.updateHighlight(x, y);
+                const zone = this._snapPreview.updateHighlight(x, y);
+                if (zone) {
+                    this._debug(`Drag highlight: zone ${zone.id} at (${x}, ${y})`);
+                } else {
+                    // Log occasionally when no zone found
+                    if (!this._lastNoZoneLog || Date.now() - this._lastNoZoneLog > 1000) {
+                        this._lastNoZoneLog = Date.now();
+                        this._debug(`No zone at cursor (${x}, ${y})`);
+                    }
+                }
             }
 
             // Determine which monitor to use based on settings
@@ -772,8 +1033,9 @@ export default class SnapKitExtension extends Extension {
                 return;
             }
 
-            // Validate layout has zones
-            if (!layout.zones || !Array.isArray(layout.zones) || layout.zones.length === 0) {
+            // Get zones for this layout (works with both simple and full-spec)
+            const zones = this._layoutManager.getZonesForDisplay(layout);
+            if (!zones || zones.length === 0) {
                 this._debug(`ERROR: Layout ${layoutId} has no zones`);
                 Main.notify('SnapKit', 'Invalid layout: no zones defined');
                 return;
@@ -796,9 +1058,14 @@ export default class SnapKitExtension extends Extension {
             // Enter SNAP MODE
             this._debug(`Entering SNAP MODE for layout ${layoutId} on monitor ${monitorIndex}`);
             this._snapModeLayout = layout;
-            this._snapModeZones = layout.zones;
+            this._snapModeZones = zones;
             this._snapModeMonitor = Main.layoutManager.monitors[monitorIndex];
             this._positionedWindows.clear(); // Clear any previously positioned windows
+            this._snapModeFilledZones.clear(); // Clear filled zones tracking
+
+            // Save this layout for THIS monitor
+            this._monitorLayouts.set(monitorIndex, layoutId);
+            this._debug(`Saved ${layoutId} as active layout for monitor ${monitorIndex}`);
 
             // Clear any existing tile group on this monitor for the new layout
             if (this._tileManager) {
@@ -809,20 +1076,39 @@ export default class SnapKitExtension extends Extension {
                 }
             }
 
-            // Find index of clicked zone
-            this._snapModeCurrentIndex = layout.zones.findIndex(z => z === zone);
+            // Find index of clicked zone by ID (not object reference)
+            this._debug(`Looking for zone ${zone.id} in layout zones: ${zones.map(z => z.id).join(', ')}`);
+            this._snapModeCurrentIndex = zones.findIndex(z => z.id === zone.id);
             if (this._snapModeCurrentIndex === -1) {
-                this._debug(`ERROR: Zone not found in layout, using first zone`);
+                this._debug(`ERROR: Zone ${zone.id} not found in layout zones, using first zone`);
+                this._debug(`Zone object: ${JSON.stringify(zone)}`);
                 this._snapModeCurrentIndex = 0;
             }
+            this._debug(`Starting SNAP MODE at zone index ${this._snapModeCurrentIndex} (zone.id=${zone.id})`);
 
             // Validate zone index is within bounds
-            if (this._snapModeCurrentIndex >= layout.zones.length) {
+            if (this._snapModeCurrentIndex >= zones.length) {
                 this._debug(`ERROR: Zone index ${this._snapModeCurrentIndex} out of bounds`);
                 this._snapModeCurrentIndex = 0;
             }
 
             this._debug(`Starting with zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
+
+            // Check if there are any snappable windows
+            const snappableWindows = this._getSnappableWindows();
+            if (snappableWindows.length === 0) {
+                this._debug(`No snappable windows available, just setting grid layout`);
+                // Just set the layout and close - no SNAP MODE needed
+                for (let [idx, ovr] of this._overlays) {
+                    ovr.hide();
+                }
+                this._overlayState = OverlayState.CLOSED;
+                this._snapModeLayout = null;
+                this._snapModeZones = null;
+                this._snapModeMonitor = null;
+                this._debug(`=== ZONE SELECTED END (GRID SET, NO WINDOWS) ===`);
+                return;
+            }
 
             // Transition to SNAP_MODE state
             this._overlayState = OverlayState.SNAP_MODE;
@@ -872,7 +1158,9 @@ export default class SnapKitExtension extends Extension {
                     this._settings,
                     this._positionedWindows,
                     this._snapModeLayout,
-                    this._snapModeCurrentIndex
+                    this._snapModeZones,
+                    this._snapModeCurrentIndex,
+                    this._snapModeFilledZones
                 );
 
                 // Connect to window selection
@@ -894,6 +1182,11 @@ export default class SnapKitExtension extends Extension {
                 this._windowSelector.connect('cancelled', () => {
                     this._debug('Window selector cancelled');
                     this._exitSnapMode();
+                });
+
+                this._windowSelector.connect('zone-clicked', (selector, zoneIndex) => {
+                    this._debug(`Zone clicked: ${zoneIndex}`);
+                    this._onZoneClicked(zoneIndex);
                 });
             }
 
@@ -939,10 +1232,11 @@ export default class SnapKitExtension extends Extension {
             // Snap the window to the monitor where the overlay was shown
             if (window && this._snapHandler.canSnapWindow(window)) {
                 const monitorIndex = this._snapModeMonitor ? this._snapModeMonitor.index : null;
+                const layoutId = this._layoutManager.getLayoutId(this._snapModeLayout);
                 this._debug(`Monitor: ${this._snapModeMonitor ? `${this._snapModeMonitor.index} (x:${this._snapModeMonitor.x} y:${this._snapModeMonitor.y} w:${this._snapModeMonitor.width} h:${this._snapModeMonitor.height})` : 'null'}`);
-                this._debug(`Calling snapWindow with: layoutId=${this._snapModeLayout.id}, monitorIndex=${monitorIndex}`);
+                this._debug(`Calling snapWindow with: layoutId=${layoutId}, monitorIndex=${monitorIndex}`);
 
-                const success = this._snapHandler.snapWindow(window, this._snapModeLayout.id, zone, monitorIndex);
+                const success = this._snapHandler.snapWindow(window, layoutId, zone, monitorIndex);
                 this._debug(`Snap result: ${success}`);
 
                 if (success) {
@@ -952,14 +1246,15 @@ export default class SnapKitExtension extends Extension {
 
                     // Register with tile manager for resize synchronization
                     if (this._tileManager) {
+                        const layoutId = this._layoutManager.getLayoutId(this._snapModeLayout);
                         this._tileManager.registerSnappedWindow(
                             window,
-                            this._snapModeLayout.id,
+                            layoutId,
                             zone,
                             monitorIndex,
                             this._snapModeLayout
                         );
-                        this._debug(`Registered window with tile manager`);
+                        this._debug(`Registered window with tile manager, layoutId: ${layoutId}`);
                     }
                 } else {
                     Main.notify('SnapKit', 'Failed to snap window');
@@ -969,17 +1264,23 @@ export default class SnapKitExtension extends Extension {
                 this._debug(`Window cannot be snapped: window=${!!window}, canSnap=${window ? this._snapHandler.canSnapWindow(window) : false}`);
             }
 
-            // Move to next zone
-            this._snapModeCurrentIndex++;
-            this._debug(`Incremented zone index to ${this._snapModeCurrentIndex}`);
+            // Mark current zone as filled
+            const currentZone = this._snapModeZones[this._snapModeCurrentIndex];
+            if (currentZone) {
+                this._snapModeFilledZones.add(currentZone.id);
+                this._debug(`Marked zone ${currentZone.id} as filled (${this._snapModeFilledZones.size}/${this._snapModeZones.length} filled)`);
+            }
 
-            // Check if we have more zones
-            if (this._snapModeCurrentIndex < this._snapModeZones.length) {
-                this._debug(`Moving to next zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
+            // Find next unfilled zone
+            const nextUnfilledIndex = this._findNextUnfilledZone();
+
+            if (nextUnfilledIndex !== -1) {
+                this._snapModeCurrentIndex = nextUnfilledIndex;
+                this._debug(`Moving to next unfilled zone ${this._snapModeCurrentIndex} (${this._snapModeZones[nextUnfilledIndex].id})`);
 
                 // Update zone positioning overlay
                 if (this._windowSelector) {
-                    this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex);
+                    this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex, this._snapModeFilledZones);
                 }
 
                 // Refresh window selector for next zone (reuse instead of recreate)
@@ -1032,22 +1333,75 @@ export default class SnapKitExtension extends Extension {
         }
     }
 
+    _onZoneClicked(zoneIndex) {
+        this._debug(`=== ZONE CLICKED ===`);
+        this._debug(`Switching to zone ${zoneIndex} from ${this._snapModeCurrentIndex}`);
+
+        if (zoneIndex >= 0 && zoneIndex < this._snapModeZones.length) {
+            const zone = this._snapModeZones[zoneIndex];
+
+            // Check if zone is already filled
+            if (this._snapModeFilledZones.has(zone.id)) {
+                this._debug(`Zone ${zone.id} is already filled, ignoring click`);
+                return;
+            }
+
+            this._snapModeCurrentIndex = zoneIndex;
+
+            // Update the window selector UI
+            if (this._windowSelector) {
+                this._windowSelector.updateCurrentZone(zoneIndex, this._snapModeFilledZones);
+            }
+        }
+    }
+
+    /**
+     * Find the next unfilled zone index
+     * @returns {number} Index of next unfilled zone, or -1 if all filled
+     */
+    _findNextUnfilledZone() {
+        // First, try to find unfilled zones after current index
+        for (let i = this._snapModeCurrentIndex + 1; i < this._snapModeZones.length; i++) {
+            const zone = this._snapModeZones[i];
+            if (!this._snapModeFilledZones.has(zone.id)) {
+                return i;
+            }
+        }
+
+        // Then, wrap around and check from beginning
+        for (let i = 0; i < this._snapModeCurrentIndex; i++) {
+            const zone = this._snapModeZones[i];
+            if (!this._snapModeFilledZones.has(zone.id)) {
+                return i;
+            }
+        }
+
+        // All zones filled
+        return -1;
+    }
+
     _onSkipZone() {
         this._debug(`=== SKIP ZONE START ===`);
         this._debug(`Skipping zone ${this._snapModeCurrentIndex}`);
 
         try {
-            // Move to next zone without positioning
-            this._snapModeCurrentIndex++;
-            this._debug(`Incremented zone index to ${this._snapModeCurrentIndex}`);
+            // Mark current zone as skipped (treat as filled so we don't come back)
+            const currentZone = this._snapModeZones[this._snapModeCurrentIndex];
+            if (currentZone) {
+                this._snapModeFilledZones.add(currentZone.id);
+                this._debug(`Marked zone ${currentZone.id} as skipped`);
+            }
 
-            // Check if we have more zones
-            if (this._snapModeCurrentIndex < this._snapModeZones.length) {
-                this._debug(`Moving to next zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
+            // Find next unfilled zone
+            const nextUnfilledIndex = this._findNextUnfilledZone();
+
+            if (nextUnfilledIndex !== -1) {
+                this._snapModeCurrentIndex = nextUnfilledIndex;
+                this._debug(`Moving to next unfilled zone ${this._snapModeCurrentIndex}`);
 
                 // Update zone positioning overlay
                 if (this._windowSelector) {
-                    this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex);
+                    this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex, this._snapModeFilledZones);
                 }
 
                 // Refresh window selector for next zone
@@ -1089,6 +1443,32 @@ export default class SnapKitExtension extends Extension {
         } catch (e) {
             this._debug(`ERROR in _hasUnpositionedWindows: ${e.message}`);
             return true; // Assume there are windows on error
+        }
+    }
+
+    /**
+     * Get all snappable windows (including minimized, excluding already positioned)
+     * @returns {Meta.Window[]}
+     */
+    _getSnappableWindows() {
+        try {
+            const workspace = global.workspace_manager.get_active_workspace();
+            const windows = workspace.list_windows();
+
+            // Filter to snapable windows (including minimized, excluding already positioned)
+            const snappableWindows = windows.filter(w => {
+                return w.window_type === Meta.WindowType.NORMAL &&
+                       w.allows_move() &&
+                       w.allows_resize() &&
+                       !w.is_fullscreen() &&
+                       !this._positionedWindows.has(w);
+            });
+
+            this._debug(`Found ${snappableWindows.length} snappable windows`);
+            return snappableWindows;
+        } catch (e) {
+            this._debug(`ERROR in _getSnappableWindows: ${e.message}`);
+            return [];
         }
     }
 

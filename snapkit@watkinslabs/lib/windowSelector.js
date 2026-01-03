@@ -14,10 +14,11 @@ export const WindowSelector = GObject.registerClass({
         'window-selected': {param_types: [Meta.Window.$gtype]},
         'window-deselected': {param_types: [Meta.Window.$gtype]},
         'skip-zone': {},
-        'cancelled': {}
+        'cancelled': {},
+        'zone-clicked': {param_types: [GObject.TYPE_INT]}
     }
 }, class WindowSelector extends St.Widget {
-    _init(settings, positionedWindows = null, layout = null, currentZoneIndex = 0) {
+    _init(settings, positionedWindows = null, layout = null, zones = null, currentZoneIndex = 0, filledZones = null) {
         super._init({
             reactive: true,
             can_focus: true,
@@ -32,7 +33,9 @@ export const WindowSelector = GObject.registerClass({
         this._windowDestroyIds = new Map();  // Track window destroy handlers
         this._positionedWindows = positionedWindows || new Set();
         this._layout = layout;
+        this._zones = zones || [];  // Zones array (works with both simple and full-spec layouts)
         this._currentZoneIndex = currentZoneIndex;
+        this._filledZones = filledZones || new Set();  // Track which zones have windows
         this._zoneWidgets = [];
 
         // Add to chrome and position fullscreen
@@ -42,13 +45,41 @@ export const WindowSelector = GObject.registerClass({
         // Build the selector UI
         this._buildUI();
 
-        // Handle ESC key
+        // Handle ESC key and snap-disable key
         this._signalIds.push(this.connect('key-press-event', (actor, event) => {
             const symbol = event.get_key_symbol();
+
+            // ESC always cancels
             if (symbol === Clutter.KEY_Escape) {
                 this.emit('cancelled');
                 return Clutter.EVENT_STOP;
             }
+
+            // Check snap-disable key (Escape is already handled above, but check setting)
+            const disableKey = this._settings.get_string('snap-disable-key');
+            let shouldCancel = false;
+
+            if (disableKey === 'escape' && symbol === Clutter.KEY_Escape) {
+                shouldCancel = true;
+            } else if (disableKey === 'space' && symbol === Clutter.KEY_space) {
+                shouldCancel = true;
+            } else if (disableKey === 'ctrl' &&
+                (symbol === Clutter.KEY_Control_L || symbol === Clutter.KEY_Control_R)) {
+                shouldCancel = true;
+            } else if (disableKey === 'alt' &&
+                (symbol === Clutter.KEY_Alt_L || symbol === Clutter.KEY_Alt_R)) {
+                shouldCancel = true;
+            } else if (disableKey === 'super' &&
+                (symbol === Clutter.KEY_Super_L || symbol === Clutter.KEY_Super_R)) {
+                shouldCancel = true;
+            }
+
+            if (shouldCancel) {
+                this._debug(`Snap disable key pressed (${disableKey}), cancelling SNAP MODE`);
+                this.emit('cancelled');
+                return Clutter.EVENT_STOP;
+            }
+
             return Clutter.EVENT_PROPAGATE;
         }));
 
@@ -99,10 +130,10 @@ export const WindowSelector = GObject.registerClass({
      * Get current zone dimensions
      */
     getCurrentZoneDimensions() {
-        if (!this._layout || !this._workArea || this._currentZoneIndex >= this._layout.zones.length) {
+        if (!this._layout || !this._workArea || this._currentZoneIndex >= this._zones.length) {
             return null;
         }
-        const zone = this._layout.zones[this._currentZoneIndex];
+        const zone = this._zones[this._currentZoneIndex];
         return {
             width: Math.round(zone.width * this._workArea.width),
             height: Math.round(zone.height * this._workArea.height)
@@ -325,33 +356,39 @@ export const WindowSelector = GObject.registerClass({
         const usableWidth = previewWidth - padding * 2;
         const usableHeight = previewHeight - padding * 2;
 
-        for (let i = 0; i < this._layout.zones.length; i++) {
-            const zone = this._layout.zones[i];
+        for (let i = 0; i < this._zones.length; i++) {
+            const zone = this._zones[i];
 
             const x = padding + Math.floor(zone.x * usableWidth);
             const y = padding + Math.floor(zone.y * usableHeight);
             const w = Math.max(1, Math.floor(zone.width * usableWidth) - 4);
             const h = Math.max(1, Math.floor(zone.height * usableHeight) - 4);
 
-            const zoneWidget = new St.Bin({
+            const zoneWidget = new St.Button({
                 width: w,
                 height: h,
                 x: x,
-                y: y
+                y: y,
+                reactive: true,
+                can_focus: true,
+                track_hover: true
             });
 
-            // Style based on zone state
+            // Style based on zone state - check if zone is actually filled, not just index
+            const zoneId = zone.id;
+            const isFilled = this._filledZones && this._filledZones.has(zoneId);
+
             let bgColor, borderStyle;
             if (i === this._currentZoneIndex) {
                 // Current zone - bright blue
                 bgColor = 'rgba(53, 132, 228, 0.8)';
                 borderStyle = '3px solid white';
-            } else if (i < this._currentZoneIndex) {
-                // Already filled - green
+            } else if (isFilled) {
+                // Actually filled with a window - green
                 bgColor = 'rgba(38, 162, 105, 0.6)';
                 borderStyle = '2px solid rgba(255,255,255,0.5)';
             } else {
-                // Future zone - dim
+                // Not filled yet - dim
                 bgColor = 'rgba(100, 100, 100, 0.4)';
                 borderStyle = '2px solid rgba(255,255,255,0.2)';
             }
@@ -364,6 +401,13 @@ export const WindowSelector = GObject.registerClass({
             });
             zoneWidget.set_child(zoneLabel);
 
+            // Click to switch to this zone
+            const zoneIndex = i;
+            zoneWidget.connect('clicked', () => {
+                this._debug(`Zone ${zoneIndex} clicked, switching active zone`);
+                this.emit('zone-clicked', zoneIndex);
+            });
+
             previewBox.add_child(zoneWidget);
             this._zoneWidgets.push({ zone, widget: zoneWidget, index: i });
         }
@@ -371,23 +415,30 @@ export const WindowSelector = GObject.registerClass({
         this._previewBox = previewBox;
     }
 
-    updateCurrentZone(newIndex) {
+    updateCurrentZone(newIndex, filledZones = null) {
         this._currentZoneIndex = newIndex;
+        this._filledZones = filledZones || new Set();
 
         // Update zone widget styles
-        for (let { widget, index } of this._zoneWidgets) {
+        for (let { zone, widget, index } of this._zoneWidgets) {
             let bgColor, borderStyle;
+            const isFilled = this._filledZones.has(zone.id);
+
             if (index === this._currentZoneIndex) {
+                // Current zone - bright blue
                 bgColor = 'rgba(53, 132, 228, 0.8)';
                 borderStyle = '3px solid white';
-            } else if (index < this._currentZoneIndex) {
+            } else if (isFilled) {
+                // Already filled - green
                 bgColor = 'rgba(38, 162, 105, 0.6)';
                 borderStyle = '2px solid rgba(255,255,255,0.5)';
             } else {
+                // Unfilled zone - dim but clickable
                 bgColor = 'rgba(100, 100, 100, 0.4)';
                 borderStyle = '2px solid rgba(255,255,255,0.2)';
             }
             widget.set_style(`background-color: ${bgColor}; border: ${borderStyle}; border-radius: 6px;`);
+            widget.reactive = !isFilled; // Disable clicks on filled zones
         }
 
         // Refresh window list to recalculate which windows fit in the new zone

@@ -58,8 +58,26 @@ export class SnapHandler {
 
             this._debug(`Work area: x:${workArea.x} y:${workArea.y} w:${workArea.width} h:${workArea.height}`);
 
-            // Calculate target geometry for the zone
-            const targetGeometry = this._layoutManager.calculateZoneGeometry(zone, workArea);
+            // Get properly resolved window geometry using layoutManager
+            // This respects gaps, padding, and all layout settings
+            let targetGeometry;
+
+            // First, try to use the zone's windowRect if it's already resolved
+            if (zone.windowRect) {
+                targetGeometry = zone.windowRect;
+                this._debug(`Using pre-resolved windowRect`);
+            } else {
+                // Otherwise, resolve from layout
+                const windowRect = this._layoutManager.getZoneWindowRect(layoutId, zone.id, workArea, monitor);
+                if (windowRect) {
+                    targetGeometry = windowRect;
+                    this._debug(`Using layoutManager.getZoneWindowRect`);
+                } else {
+                    // Fallback to old simple calculation (shouldn't happen for properly configured layouts)
+                    targetGeometry = this._layoutManager.calculateZoneGeometry(zone, workArea);
+                    this._debug(`Fallback to calculateZoneGeometry (layout may not support proper resolution)`);
+                }
+            }
 
             this._debug(`Target geometry: x:${targetGeometry.x} y:${targetGeometry.y} w:${targetGeometry.width} h:${targetGeometry.height}`);
 

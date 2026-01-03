@@ -206,6 +206,63 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         appearancePage.add(zoneColorsGroup);
 
+        // Snap Preview Appearance Group
+        const snapPreviewAppearanceGroup = new Adw.PreferencesGroup({
+            title: 'Snap Preview (Drag to Snap)',
+            description: 'Visual appearance of the snap grid when dragging windows'
+        });
+
+        // Grid color
+        snapPreviewAppearanceGroup.add(this._createColorRow(
+            settings,
+            'snap-preview-grid-color',
+            'Grid Zone Color',
+            'Background color of snap zones'
+        ));
+
+        // Grid border color
+        snapPreviewAppearanceGroup.add(this._createColorRow(
+            settings,
+            'snap-preview-grid-border-color',
+            'Grid Border Color',
+            'Border color of snap zones'
+        ));
+
+        // Highlight color
+        snapPreviewAppearanceGroup.add(this._createColorRow(
+            settings,
+            'snap-preview-highlight-color',
+            'Highlight Color',
+            'Color when window is over a zone'
+        ));
+
+        // Snap preview opacity slider
+        const snapOpacityRow = new Adw.ActionRow({
+            title: 'Preview Opacity',
+            subtitle: 'Opacity of the snap preview grid'
+        });
+        const snapOpacityScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({
+                lower: 0.1,
+                upper: 1.0,
+                step_increment: 0.05,
+                page_increment: 0.1
+            }),
+            digits: 2,
+            draw_value: true,
+            hexpand: true,
+            valign: Gtk.Align.CENTER
+        });
+        snapOpacityScale.set_value(settings.get_double('snap-preview-opacity'));
+        snapOpacityScale.connect('value-changed', (scale) => {
+            settings.set_double('snap-preview-opacity', scale.get_value());
+        });
+        snapOpacityRow.add_suffix(snapOpacityScale);
+        snapPreviewAppearanceGroup.add(snapOpacityRow);
+
+        appearancePage.add(snapPreviewAppearanceGroup);
+
         window.add(appearancePage);
 
         // ===== BEHAVIOR PAGE =====
@@ -472,6 +529,59 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         snapPreviewEnabledRow.activatable_widget = snapPreviewEnabledSwitch;
         snapPreviewGroup.add(snapPreviewEnabledRow);
 
+        // Default snap layout selection
+        const snapLayoutRow = new Adw.ComboRow({
+            title: 'Default Snap Layout',
+            subtitle: 'Layout to use when dragging windows'
+        });
+
+        const snapLayoutModel = new Gtk.StringList();
+        const snapLayoutIds = [];
+
+        // Add all layout options (presets + custom)
+        const allLayoutOptions = [
+            {id: 'half-split', name: 'Half Split'},
+            {id: 'quarters', name: 'Quarters'},
+            {id: 'thirds-vertical', name: 'Thirds (Vertical)'},
+            {id: 'thirds-horizontal', name: 'Thirds (Horizontal)'},
+            {id: 'left-focus', name: 'Left Focus'},
+            {id: 'right-focus', name: 'Right Focus'},
+            {id: 'top-focus', name: 'Top Focus'},
+            {id: 'bottom-focus', name: 'Bottom Focus'}
+        ];
+
+        // Add custom layouts
+        try {
+            const customLayoutsJson = settings.get_string('custom-layouts');
+            if (customLayoutsJson && customLayoutsJson !== '[]') {
+                const customLayouts = JSON.parse(customLayoutsJson);
+                for (const layout of customLayouts) {
+                    allLayoutOptions.push({id: layout.name, name: layout.name});
+                }
+            }
+        } catch (e) {
+            log(`SnapKit Prefs: Error loading custom layouts for snap preview: ${e.message}`);
+        }
+
+        for (const layout of allLayoutOptions) {
+            snapLayoutModel.append(layout.name);
+            snapLayoutIds.push(layout.id);
+        }
+        snapLayoutRow.set_model(snapLayoutModel);
+
+        // Find current selection
+        const currentSnapLayout = settings.get_string('snap-preview-layout');
+        const currentIndex = snapLayoutIds.indexOf(currentSnapLayout);
+        snapLayoutRow.set_selected(currentIndex >= 0 ? currentIndex : 0);
+
+        snapLayoutRow.connect('notify::selected', (widget) => {
+            const selectedId = snapLayoutIds[widget.selected];
+            if (selectedId) {
+                settings.set_string('snap-preview-layout', selectedId);
+            }
+        });
+        snapPreviewGroup.add(snapLayoutRow);
+
         // Auto-snap on release
         const autoSnapRow = new Adw.ActionRow({
             title: 'Auto-Snap on Release',
@@ -489,81 +599,27 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         // Snap disable key
         const disableKeyRow = new Adw.ComboRow({
             title: 'Snap Disable Key',
-            subtitle: 'Hold this key while dragging to disable snap'
+            subtitle: 'Press this key while dragging to disable snap'
         });
         const disableKeyModel = new Gtk.StringList();
+        disableKeyModel.append('Escape');
+        disableKeyModel.append('Space');
         disableKeyModel.append('Ctrl');
         disableKeyModel.append('Alt');
-        disableKeyModel.append('Shift');
         disableKeyModel.append('Super');
         disableKeyRow.set_model(disableKeyModel);
 
         const currentDisableKey = settings.get_string('snap-disable-key');
-        const disableKeyMap = {'ctrl': 0, 'alt': 1, 'shift': 2, 'super': 3};
+        const disableKeyMap = {'escape': 0, 'space': 1, 'ctrl': 2, 'alt': 3, 'super': 4};
         disableKeyRow.set_selected(disableKeyMap[currentDisableKey] ?? 0);
 
         disableKeyRow.connect('notify::selected', (widget) => {
-            const keys = ['ctrl', 'alt', 'shift', 'super'];
+            const keys = ['escape', 'space', 'ctrl', 'alt', 'super'];
             settings.set_string('snap-disable-key', keys[widget.selected]);
         });
         snapPreviewGroup.add(disableKeyRow);
 
-        // Grid color
-        snapPreviewGroup.add(this._createColorRow(
-            settings,
-            'snap-preview-grid-color',
-            'Grid Zone Color',
-            'Background color of snap zones'
-        ));
-
-        // Grid border color
-        snapPreviewGroup.add(this._createColorRow(
-            settings,
-            'snap-preview-grid-border-color',
-            'Grid Border Color',
-            'Border color of snap zones'
-        ));
-
-        // Highlight color
-        snapPreviewGroup.add(this._createColorRow(
-            settings,
-            'snap-preview-highlight-color',
-            'Highlight Color',
-            'Color when window is over a zone'
-        ));
-
         behaviorPage.add(snapPreviewGroup);
-
-        // Performance Group
-        const performanceGroup = new Adw.PreferencesGroup({
-            title: 'Performance',
-            description: 'Fine-tune performance and responsiveness'
-        });
-
-        // Motion Throttle
-        const throttleRow = new Adw.ActionRow({
-            title: 'Motion Event Throttle',
-            subtitle: 'Milliseconds between motion processing (lower = responsive, higher = efficient)'
-        });
-
-        const throttleSpin = new Gtk.SpinButton({
-            adjustment: new Gtk.Adjustment({
-                lower: 8,
-                upper: 100,
-                step_increment: 4,
-                value: settings.get_int('motion-throttle-interval')
-            }),
-            valign: Gtk.Align.CENTER
-        });
-
-        throttleSpin.connect('value-changed', (widget) => {
-            settings.set_int('motion-throttle-interval', widget.get_value());
-        });
-
-        throttleRow.add_suffix(throttleSpin);
-        performanceGroup.add(throttleRow);
-
-        behaviorPage.add(performanceGroup);
 
         window.add(behaviorPage);
 
@@ -776,6 +832,37 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         advancedGroup.add(disableEdgeTilingRow);
 
         advancedPage.add(advancedGroup);
+
+        // Performance Group
+        const performanceGroup = new Adw.PreferencesGroup({
+            title: 'Performance',
+            description: 'Fine-tune performance and responsiveness'
+        });
+
+        // Motion Throttle
+        const throttleRow = new Adw.ActionRow({
+            title: 'Motion Event Throttle',
+            subtitle: 'Milliseconds between motion processing (lower = responsive, higher = efficient)'
+        });
+
+        const throttleSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 8,
+                upper: 100,
+                step_increment: 4,
+                value: settings.get_int('motion-throttle-interval')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+
+        throttleSpin.connect('value-changed', (widget) => {
+            settings.set_int('motion-throttle-interval', widget.get_value());
+        });
+
+        throttleRow.add_suffix(throttleSpin);
+        performanceGroup.add(throttleRow);
+
+        advancedPage.add(performanceGroup);
 
         // Debug Group (at bottom of Advanced page)
         const debugGroup = new Adw.PreferencesGroup({

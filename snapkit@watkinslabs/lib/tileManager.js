@@ -58,9 +58,15 @@ export class TileManager {
      * Register a window as snapped to a zone
      */
     registerSnappedWindow(window, layoutId, zone, monitorIndex, layout) {
-        if (!window || !zone) return;
+        if (!window || !zone) {
+            this._debug(`Cannot register: window=${!!window}, zone=${!!zone}`);
+            return;
+        }
 
-        this._debug(`Registering window "${window.get_title()}" to zone ${zone.id} on monitor ${monitorIndex}`);
+        this._debug(`Registering window "${window.get_title()}" to layout=${layoutId}, zone=${zone.id}, monitor=${monitorIndex}`);
+        this._debug(`  Layout provided: ${layout ? 'yes' : 'no'}, has root: ${layout?.root ? 'yes' : 'no'}`);
+        this._debug(`  Zone has windowRect: ${zone.windowRect ? 'yes' : 'no'}`);
+        this._debug(`  Zone has tileRect: ${zone.tileRect ? 'yes' : 'no'}`);
 
         // Remove from any existing tile group first
         this.unregisterWindow(window);
@@ -238,16 +244,20 @@ export class TileManager {
      * Layout-driven resize: update divider → re-resolve → re-snap all
      */
     _handleLayoutDrivenResize(window, info, edge, delta) {
+        this._debug(`_handleLayoutDrivenResize: window="${window.get_title()}", zoneId=${info.zoneId}, edge=${edge}, delta=${delta}`);
+
         if (!this._layoutManager) {
-            this._debug('No layout manager, falling back to simple resize');
+            this._debug('No layout manager, cannot sync resize');
             return;
         }
 
         const group = this._tileGroups.get(info.monitorIndex);
         if (!group) {
-            this._debug('No tile group found');
+            this._debug(`No tile group found for monitor ${info.monitorIndex}`);
             return;
         }
+
+        this._debug(`Tile group: layoutId=${group.layoutId}, windows=${group.windows.size}`);
 
         const monitor = group.monitor;
         if (!monitor) {
@@ -257,8 +267,10 @@ export class TileManager {
 
         // Get work area
         const workArea = Main.layoutManager.getWorkAreaForMonitor(info.monitorIndex);
+        this._debug(`WorkArea: ${workArea.width}x${workArea.height}`);
 
         // Step 1: Update the layout divider override
+        this._debug(`Calling handleResize for layout ${group.layoutId}`);
         const overrideUpdated = this._layoutManager.handleResize(
             group.layoutId,
             info.zoneId,
@@ -268,8 +280,10 @@ export class TileManager {
             monitor
         );
 
+        this._debug(`Override updated: ${overrideUpdated}`);
+
         if (!overrideUpdated) {
-            this._debug(`Divider override not updated for ${edge} edge`);
+            this._debug(`Divider override not updated for ${edge} edge - layout may not be full-spec`);
             // Still re-snap to ensure consistency
         }
 
@@ -280,12 +294,15 @@ export class TileManager {
             monitor
         );
 
+        this._debug(`Resolved ${rects.size} zones after resize`);
+
         if (rects.size === 0) {
             this._debug('No rects resolved');
             return;
         }
 
         // Step 3: Re-snap ALL windows to their zones
+        this._debug('Re-snapping all windows in tile group');
         this._reapplyAllWindowsInGroup(group, rects);
     }
 

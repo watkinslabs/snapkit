@@ -3,6 +3,137 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { isFullSpecLayout } from './layoutValidator.js';
+
+/**
+ * Extract zones with normalized coordinates for display purposes.
+ * Works with both simple format (zones array) and full-spec format (root tree).
+ * Does NOT modify the layout - just reads it.
+ * @param {object} layout
+ * @returns {Array<{id: string, x: number, y: number, width: number, height: number}>}
+ */
+function getZonesForDisplay(layout) {
+    if (!layout) return [];
+
+    // Simple format - already has zones array with normalized coords
+    if (!isFullSpecLayout(layout)) {
+        return layout.zones || [];
+    }
+
+    // Full-spec format - traverse tree to extract leaf positions
+    const zones = [];
+    traverseForZones(layout.root, 0, 0, 1, 1, zones);
+    return zones;
+}
+
+/**
+ * Recursively traverse the layout tree to extract zone positions.
+ * Calculates normalized (0-1) coordinates for each leaf.
+ * @param {object} node - Current node in tree
+ * @param {number} x - Current x position (0-1)
+ * @param {number} y - Current y position (0-1)
+ * @param {number} width - Current width (0-1)
+ * @param {number} height - Current height (0-1)
+ * @param {Array} zones - Output array (mutated)
+ */
+function traverseForZones(node, x, y, width, height, zones) {
+    if (!node) return;
+
+    if (node.type === 'leaf') {
+        zones.push({
+            id: node.id,
+            x: x,
+            y: y,
+            width: width,
+            height: height
+        });
+        return;
+    }
+
+    if (node.type === 'split' && node.children && node.children.length > 0) {
+        const isRow = node.dir === 'row'; // row = horizontal split (children stack vertically)
+        const isCol = node.dir === 'col'; // col = vertical split (children side by side)
+
+        // Calculate sizes for children
+        // First, collect size specs and identify which have explicit sizes
+        const childSizes = [];
+        let totalFrac = 0;
+        let fracCount = 0;
+
+        for (const child of node.children) {
+            if (child.size && child.size.kind === 'frac' && child.size.value) {
+                childSizes.push({ frac: child.size.value });
+                totalFrac += child.size.value;
+                fracCount++;
+            } else {
+                // Default: equal distribution
+                childSizes.push({ frac: null });
+                fracCount++;
+            }
+        }
+
+        // Normalize fractions - if no explicit fracs, distribute equally
+        const numChildren = node.children.length;
+        let normalizedSizes = [];
+
+        if (totalFrac > 0) {
+            // Some children have explicit fracs - fill in the rest
+            let remainingFrac = 1.0;
+            let unspecifiedCount = 0;
+
+            for (const cs of childSizes) {
+                if (cs.frac !== null) {
+                    remainingFrac -= cs.frac / totalFrac;
+                } else {
+                    unspecifiedCount++;
+                }
+            }
+
+            // Distribute remaining to unspecified (or if all specified, normalize)
+            for (const cs of childSizes) {
+                if (cs.frac !== null) {
+                    normalizedSizes.push(cs.frac / totalFrac);
+                } else if (unspecifiedCount > 0) {
+                    normalizedSizes.push(remainingFrac / unspecifiedCount);
+                } else {
+                    normalizedSizes.push(1 / numChildren);
+                }
+            }
+        } else {
+            // No explicit fracs - equal distribution
+            for (let i = 0; i < numChildren; i++) {
+                normalizedSizes.push(1 / numChildren);
+            }
+        }
+
+        // Traverse children with calculated positions
+        let offset = 0;
+        for (let i = 0; i < node.children.length; i++) {
+            const child = node.children[i];
+            const size = normalizedSizes[i];
+
+            let childX, childY, childW, childH;
+
+            if (isCol) {
+                // Columns: children are side by side horizontally
+                childX = x + offset * width;
+                childY = y;
+                childW = size * width;
+                childH = height;
+                offset += size;
+            } else {
+                // Rows: children stack vertically
+                childX = x;
+                childY = y + offset * height;
+                childW = width;
+                childH = size * height;
+                offset += size;
+            }
+
+            traverseForZones(child, childX, childY, childW, childH, zones);
+        }
+    }
+}
 
 /**
  * LayoutOverlay - Full-screen overlay displaying snap layout grid
@@ -77,6 +208,7 @@ export const LayoutOverlay = GObject.registerClass({
 
     _onButtonPress(actor, event) {
         const button = event.get_button();
+        this._debug(`Overlay _onButtonPress: button=${button}`);
 
         // Right-click (button 3) opens preferences
         if (button === 3) {
@@ -299,12 +431,16 @@ export const LayoutOverlay = GObject.registerClass({
             layout_manager: new Clutter.FixedLayout(),
             width: zoneWidth,
             height: zoneHeight,
-            reactive: true
+            reactive: false  // Don't capture events - let layoutBox handle motion
         });
 
-        // Create zone widgets
+        // Create zone widgets - supports both simple and full-spec layouts
         const zoneWidgets = [];
-        for (let zone of layout.zones) {
+        const zones = getZonesForDisplay(layout);
+        if (zones.length === 0) {
+            this._debug(`Layout ${layout.name || layout.id} has no zones`);
+        }
+        for (let zone of zones) {
             const zoneWidget = this._createZoneWidget(zone, layout);
             zoneContainer.add_child(zoneWidget);
             zoneWidgets.push({zone, widget: zoneWidget});
@@ -315,6 +451,7 @@ export const LayoutOverlay = GObject.registerClass({
         // Store zone widgets for later reference
         layoutBox._zoneContainer = zoneContainer;
         layoutBox._zoneWidgets = zoneWidgets;
+        layoutBox._zones = zones; // Store zones array to avoid recreating objects
         layoutBox._layout = layout;
         layoutBox._scale = scale; // Store scale for zone positioning
 
@@ -356,7 +493,8 @@ export const LayoutOverlay = GObject.registerClass({
             return Clutter.EVENT_PROPAGATE;
         });
 
-        layoutBox.connect('button-press-event', () => {
+        layoutBox.connect('button-press-event', (actor, event) => {
+            this._debug(`layoutBox button-press-event: layout=${layout.name || layout.id}`);
             this._onLayoutClick(layoutBox);
             return Clutter.EVENT_STOP;
         });
@@ -367,8 +505,8 @@ export const LayoutOverlay = GObject.registerClass({
     _createZoneWidget(zone, layout) {
         const zoneWidget = new St.Bin({
             style_class: 'snapkit-zone',
-            reactive: true,
-            track_hover: true
+            reactive: false,  // Don't capture events - let layoutBox handle motion
+            track_hover: false
         });
 
         zoneWidget._zone = zone;
@@ -397,36 +535,74 @@ export const LayoutOverlay = GObject.registerClass({
         const [containerX, containerY] = zoneContainer.get_transformed_position();
         const [containerWidth, containerHeight] = zoneContainer.get_size();
 
+        if (containerWidth <= 0 || containerHeight <= 0) {
+            return;
+        }
+
         const relX = (x - containerX) / containerWidth;
         const relY = (y - containerY) / containerHeight;
 
-        // Find which zone the mouse is over using zones array (normalized coords)
-        const layout = layoutBox._layout;
+        // Find which zone the mouse is over using stored zones (normalized coords)
         let foundZone = null;
+        const zones = layoutBox._zones || [];
 
-        if (layout.zones && Array.isArray(layout.zones)) {
-            for (const zone of layout.zones) {
-                if (relX >= zone.x && relX < zone.x + zone.width &&
-                    relY >= zone.y && relY < zone.y + zone.height) {
-                    foundZone = zone;
-                    break;
-                }
+        for (const zone of zones) {
+            if (relX >= zone.x && relX < zone.x + zone.width &&
+                relY >= zone.y && relY < zone.y + zone.height) {
+                foundZone = zone;
+                break;
             }
         }
 
-        if (foundZone !== this._hoveredZone) {
+        // Compare by ID to handle both simple and full-spec layouts
+        const hoveredId = this._hoveredZone?.id ?? null;
+        const foundId = foundZone?.id ?? null;
+
+        if (foundId !== hoveredId) {
             this._hoveredZone = foundZone;
+            this._debug(`Hovered zone changed to: ${foundZone ? foundZone.id : 'none'} (relX=${relX.toFixed(2)}, relY=${relY.toFixed(2)})`);
             this._updateZoneHighlight(layoutBox, foundZone);
         }
     }
 
-    _onLayoutClick(layoutBox) {
-        this._debug(`_onLayoutClick called - hoveredZone: ${this._hoveredZone ? this._hoveredZone.id : 'none'}`);
+    _onLayoutClick(layoutBox, event) {
+        this._debug(`_onLayoutClick called`);
         try {
-            // Use the hovered zone if available, otherwise default to the first zone
-            const zone = this._hoveredZone || (layoutBox._layout.zones && layoutBox._layout.zones[0]);
+            // Calculate zone at click time (don't rely on cached _hoveredZone which may be stale)
+            const zoneContainer = layoutBox._zoneContainer;
+            const [x, y] = global.get_pointer();
+            const [containerX, containerY] = zoneContainer.get_transformed_position();
+            const [containerWidth, containerHeight] = zoneContainer.get_size();
+
+            this._debug(`Click: pointer=(${x}, ${y}), container=(${containerX}, ${containerY}), size=(${containerWidth}x${containerHeight})`);
+
+            let zone = null;
+            if (containerWidth > 0 && containerHeight > 0) {
+                const relX = (x - containerX) / containerWidth;
+                const relY = (y - containerY) / containerHeight;
+
+                this._debug(`Click at relX=${relX.toFixed(3)}, relY=${relY.toFixed(3)}`);
+
+                const zones = layoutBox._zones || [];
+                this._debug(`Layout has ${zones.length} zones:`);
+                for (const z of zones) {
+                    const inZone = relX >= z.x && relX < z.x + z.width &&
+                                   relY >= z.y && relY < z.y + z.height;
+                    this._debug(`  Zone ${z.id}: x=${z.x}, y=${z.y}, w=${z.width}, h=${z.height} -> ${inZone ? 'HIT' : 'miss'}`);
+                    if (inZone && !zone) {
+                        zone = z;
+                    }
+                }
+            }
+
+            // Fall back to first zone if none found
+            if (!zone) {
+                const zones = layoutBox._zones || [];
+                zone = zones[0];
+                this._debug(`No zone at click position, using first zone: ${zone ? zone.id : 'none'}`);
+            }
+
             if (zone) {
-                // Get layout ID - use 'name' for full-spec layouts, 'id' for simple layouts
                 const layoutId = this._layoutManager.getLayoutId(layoutBox._layout);
                 this._debug(`Emitting zone-selected for layout ${layoutId}, zone ${zone.id}`);
                 this.emit('zone-selected', layoutId, zone);
@@ -444,9 +620,9 @@ export const LayoutOverlay = GObject.registerClass({
 
         if (!zone) return;
 
-        // Find and highlight the zone widget
+        // Find and highlight the zone widget by ID
         for (let {zone: z, widget} of layoutBox._zoneWidgets) {
-            if (z === zone) {
+            if (z.id === zone.id) {
                 const highlightColor = this._sanitizeColor(
                     this._settings.get_string('overlay-highlight-color')
                 );
