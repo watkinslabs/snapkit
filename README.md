@@ -2,9 +2,9 @@
 
 A GNOME Shell extension that brings Windows 11-style snap layouts to Linux with enforced tiling.
 
-![Layout Picker](preview1.png)
+![Layout Picker](assets/preview1.png)
 
-![Window Selector](preview2.png)
+![Window Selector](assets/preview2.png)
 
 ## Overview
 
