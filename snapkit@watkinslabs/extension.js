@@ -13,7 +13,7 @@ import {LayoutManager} from './lib/layoutManager.js';
 import {LayoutOverlay} from './lib/overlayUI.js';
 import {SnapHandler} from './lib/snapHandler.js';
 import {WindowSelector} from './lib/windowSelector.js';
-import {ZonePositioningOverlay} from './lib/zonePositioningOverlay.js';
+import {TileManager} from './lib/tileManager.js';
 
 // Overlay states
 const OverlayState = {
@@ -28,6 +28,7 @@ export default class SnapKitExtension extends Extension {
         this._overlays = new Map(); // Map of monitor index -> overlay
         this._layoutManager = null;
         this._snapHandler = null;
+        this._tileManager = null;         // Manages tiled windows for resize sync
         this._grabSignalId = null;
         this._grabEndSignalId = null;
         this._motionSignalId = null;
@@ -47,7 +48,6 @@ export default class SnapKitExtension extends Extension {
         this._snapModeCurrentIndex = 0;   // Current zone index
         this._snapModeMonitor = null;     // Monitor where overlay was shown
         this._windowSelector = null;      // Window selector overlay
-        this._zonePositioningOverlay = null;  // Zone positioning visual overlay
         this._positionedWindows = new Set();  // Set of windows already positioned
         this._snapModeTimeoutId = null;   // Timeout to auto-exit SNAP MODE
     }
@@ -131,6 +131,10 @@ export default class SnapKitExtension extends Extension {
             this._debug('Creating snap handler...');
             this._snapHandler = new SnapHandler(this._layoutManager, this._settings);
             this._debug('Snap handler created');
+
+            this._debug('Creating tile manager...');
+            this._tileManager = new TileManager(this._settings);
+            this._debug('Tile manager created');
 
             // Create overlays and show hitboxes
             this._debug('Creating overlays...');
@@ -220,10 +224,9 @@ export default class SnapKitExtension extends Extension {
             this._windowSelector = null;
         }
 
-        // Destroy zone positioning overlay if exists
-        if (this._zonePositioningOverlay) {
-            this._zonePositioningOverlay.destroy();
-            this._zonePositioningOverlay = null;
+        if (this._tileManager) {
+            this._tileManager.destroy();
+            this._tileManager = null;
         }
 
         if (this._snapHandler) {
@@ -314,8 +317,6 @@ export default class SnapKitExtension extends Extension {
             const triggerEdge = this._settings.get_string('trigger-edge');
             let inTriggerZone = this._isInTriggerZone(x, y, monitor, triggerSize, triggerEdge);
             let overOverlay = this._isOverOverlay(x, y, overlay);
-
-            this._debug(`Motion at (${x}, ${y}) - monitor: ${monitor.index}, inTriggerZone: ${inTriggerZone}, overOverlay: ${overOverlay}, state: ${this._overlayState}`);
 
             if (this._overlayState === OverlayState.CLOSED) {
                 // Mouse detection is based on TRIGGER ZONE, not visual overlay position
@@ -691,6 +692,15 @@ export default class SnapKitExtension extends Extension {
             this._snapModeMonitor = Main.layoutManager.monitors[monitorIndex];
             this._positionedWindows.clear(); // Clear any previously positioned windows
 
+            // Clear any existing tile group on this monitor for the new layout
+            if (this._tileManager) {
+                const existingGroup = this._tileManager.getTileGroup(monitorIndex);
+                if (existingGroup && existingGroup.layoutId !== layoutId) {
+                    this._debug(`Clearing existing tile group for new layout`);
+                    this._tileManager._clearGroup(monitorIndex);
+                }
+            }
+
             // Find index of clicked zone
             this._snapModeCurrentIndex = layout.zones.findIndex(z => z === zone);
             if (this._snapModeCurrentIndex === -1) {
@@ -748,18 +758,14 @@ export default class SnapKitExtension extends Extension {
             );
             this._debug(`SNAP MODE timeout set for ${timeoutSeconds} seconds`);
 
-            // Create zone positioning overlay if not exists
-            if (!this._zonePositioningOverlay) {
-                this._zonePositioningOverlay = new ZonePositioningOverlay(
-                    this._snapModeLayout,
-                    this._snapModeCurrentIndex,
-                    this._settings
-                );
-            }
-
-            // Create window selector if not exists
+            // Create window selector with zone preview integrated
             if (!this._windowSelector) {
-                this._windowSelector = new WindowSelector(this._settings, this._positionedWindows);
+                this._windowSelector = new WindowSelector(
+                    this._settings,
+                    this._positionedWindows,
+                    this._snapModeLayout,
+                    this._snapModeCurrentIndex
+                );
 
                 // Connect to window selection
                 this._windowSelector.connect('window-selected', (selector, window) => {
@@ -783,8 +789,7 @@ export default class SnapKitExtension extends Extension {
                 });
             }
 
-            // Show both overlays
-            this._zonePositioningOverlay.show();
+            // Show window selector (zone preview is integrated)
             this._windowSelector.show();
         } catch (e) {
             this._debug(`ERROR in _showWindowSelector: ${e.message}`);
@@ -836,6 +841,18 @@ export default class SnapKitExtension extends Extension {
                     // Add window to positioned set
                     this._positionedWindows.add(window);
                     this._debug(`Added window to positioned set, total positioned: ${this._positionedWindows.size}`);
+
+                    // Register with tile manager for resize synchronization
+                    if (this._tileManager) {
+                        this._tileManager.registerSnappedWindow(
+                            window,
+                            this._snapModeLayout.id,
+                            zone,
+                            monitorIndex,
+                            this._snapModeLayout
+                        );
+                        this._debug(`Registered window with tile manager`);
+                    }
                 } else {
                     Main.notify('SnapKit', 'Failed to snap window');
                     this._debug('Snap failed - see SnapHandler logs for details');
@@ -853,8 +870,8 @@ export default class SnapKitExtension extends Extension {
                 this._debug(`Moving to next zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
 
                 // Update zone positioning overlay
-                if (this._zonePositioningOverlay) {
-                    this._zonePositioningOverlay.updateCurrentZone(this._snapModeCurrentIndex);
+                if (this._windowSelector) {
+                    this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex);
                 }
 
                 // Refresh window selector for next zone (reuse instead of recreate)
@@ -921,8 +938,8 @@ export default class SnapKitExtension extends Extension {
                 this._debug(`Moving to next zone ${this._snapModeCurrentIndex} of ${this._snapModeZones.length}`);
 
                 // Update zone positioning overlay
-                if (this._zonePositioningOverlay) {
-                    this._zonePositioningOverlay.updateCurrentZone(this._snapModeCurrentIndex);
+                if (this._windowSelector) {
+                    this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex);
                 }
 
                 // Refresh window selector for next zone
@@ -978,15 +995,7 @@ export default class SnapKitExtension extends Extension {
                 this._debug('SNAP MODE timeout cleared');
             }
 
-            // Destroy zone positioning overlay
-            if (this._zonePositioningOverlay) {
-                this._zonePositioningOverlay.hide();
-                this._zonePositioningOverlay.destroy();
-                this._zonePositioningOverlay = null;
-                this._debug('Zone positioning overlay destroyed');
-            }
-
-            // Destroy window selector
+            // Destroy window selector (includes zone preview)
             if (this._windowSelector) {
                 this._windowSelector.hide();
                 this._windowSelector.destroy();

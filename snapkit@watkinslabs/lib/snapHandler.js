@@ -70,10 +70,24 @@ export class SnapHandler {
                 return false;
             }
 
+            // Unminimize window if it's minimized
+            if (window.minimized) {
+                this._debug('Window is minimized, unminimizing first');
+                window.unminimize();
+                // Activate to ensure it's properly restored
+                window.activate(global.get_current_time());
+            }
+
             // Unmaximize window if it's maximized
             if (window.get_maximized()) {
                 this._debug('Window is maximized, unmaximizing first');
                 window.unmaximize(Meta.MaximizeFlags.BOTH);
+            }
+
+            // Move window to the target monitor first if it's on a different one
+            if (window.get_monitor() !== monitorIndex) {
+                this._debug(`Moving window from monitor ${window.get_monitor()} to ${monitorIndex}`);
+                window.move_to_monitor(monitorIndex);
             }
 
             // Apply the new geometry
@@ -105,21 +119,28 @@ export class SnapHandler {
 
     _validateGeometry(geometry, monitor) {
         if (!geometry || !monitor) {
+            this._debug('Validation failed: geometry or monitor is null');
             return false;
         }
 
-        // Check if geometry is within monitor bounds
-        if (geometry.x < monitor.x || geometry.y < monitor.y) {
+        // Allow some tolerance for rounding errors (5 pixels)
+        const tolerance = 5;
+
+        // Check if geometry is reasonably within monitor bounds
+        if (geometry.x < monitor.x - tolerance || geometry.y < monitor.y - tolerance) {
+            this._debug(`Validation failed: position out of bounds. x:${geometry.x} < ${monitor.x}, y:${geometry.y} < ${monitor.y}`);
             return false;
         }
 
-        if (geometry.x + geometry.width > monitor.x + monitor.width ||
-            geometry.y + geometry.height > monitor.y + monitor.height) {
+        if (geometry.x + geometry.width > monitor.x + monitor.width + tolerance ||
+            geometry.y + geometry.height > monitor.y + monitor.height + tolerance) {
+            this._debug(`Validation failed: extends beyond monitor. x+w:${geometry.x + geometry.width} > ${monitor.x + monitor.width}, y+h:${geometry.y + geometry.height} > ${monitor.y + monitor.height}`);
             return false;
         }
 
         // Check minimum size
-        if (geometry.width < 100 || geometry.height < 100) {
+        if (geometry.width < 50 || geometry.height < 50) {
+            this._debug(`Validation failed: size too small. w:${geometry.width}, h:${geometry.height}`);
             return false;
         }
 
@@ -192,23 +213,66 @@ export class SnapHandler {
     }
 
     /**
+     * Get the minimum size for a window
+     */
+    getWindowMinSize(window) {
+        let minWidth = 100;
+        let minHeight = 100;
+
+        try {
+            // Try to get frame rect for current size as a baseline
+            const frameRect = window.get_frame_rect();
+
+            // Some windows report their minimum size through these methods
+            // but GNOME Shell's Meta.Window API is limited here
+            // We'll use a heuristic based on window type and current size
+
+            // If window is already small, that's likely near its minimum
+            if (frameRect.width < 400) {
+                minWidth = Math.max(minWidth, frameRect.width);
+            }
+            if (frameRect.height < 300) {
+                minHeight = Math.max(minHeight, frameRect.height);
+            }
+        } catch (e) {
+            this._debug(`Error getting min size: ${e.message}`);
+        }
+
+        return { width: minWidth, height: minHeight };
+    }
+
+    /**
+     * Check if a window can fit in a zone
+     */
+    canWindowFitZone(window, zone, workArea) {
+        const minSize = this.getWindowMinSize(window);
+        const zoneWidth = Math.round(zone.width * workArea.width);
+        const zoneHeight = Math.round(zone.height * workArea.height);
+
+        return {
+            fits: zoneWidth >= minSize.width && zoneHeight >= minSize.height,
+            zoneWidth,
+            zoneHeight,
+            minWidth: minSize.width,
+            minHeight: minSize.height
+        };
+    }
+
+    /**
      * Constrain geometry to window's min/max size constraints
      */
     _constrainGeometry(window, geometry) {
         let {x, y, width, height} = geometry;
 
-        // GNOME Shell's Meta.Window doesn't have get_size_hints()
-        // Instead, we'll just ensure reasonable minimum sizes
-        const MIN_WIDTH = 100;
-        const MIN_HEIGHT = 100;
+        const minSize = this.getWindowMinSize(window);
 
-        if (width < MIN_WIDTH) {
-            this._debug(`Width ${width} below minimum, setting to ${MIN_WIDTH}`);
-            width = MIN_WIDTH;
+        if (width < minSize.width) {
+            this._debug(`Width ${width} below minimum ${minSize.width}, adjusting`);
+            width = minSize.width;
         }
-        if (height < MIN_HEIGHT) {
-            this._debug(`Height ${height} below minimum, setting to ${MIN_HEIGHT}`);
-            height = MIN_HEIGHT;
+        if (height < minSize.height) {
+            this._debug(`Height ${height} below minimum ${minSize.height}, adjusting`);
+            height = minSize.height;
         }
 
         return {x, y, width, height};

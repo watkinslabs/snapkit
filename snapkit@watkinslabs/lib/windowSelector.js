@@ -7,7 +7,7 @@ import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 /**
- * WindowSelector - Shows thumbnails of all snapable windows for user to select
+ * WindowSelector - Shows zone preview and window thumbnails for snap mode
  */
 export const WindowSelector = GObject.registerClass({
     Signals: {
@@ -17,18 +17,23 @@ export const WindowSelector = GObject.registerClass({
         'cancelled': {}
     }
 }, class WindowSelector extends St.Widget {
-    _init(settings, positionedWindows = null) {
+    _init(settings, positionedWindows = null, layout = null, currentZoneIndex = 0) {
         super._init({
             reactive: true,
             can_focus: true,
-            track_hover: true
+            track_hover: false,
+            layout_manager: new Clutter.BinLayout(),
+            style: 'background-color: rgba(0, 0, 0, 0.9);'
         });
 
         this._settings = settings;
         this._windowButtons = [];
         this._signalIds = [];  // Track signal IDs for cleanup
         this._windowDestroyIds = new Map();  // Track window destroy handlers
-        this._positionedWindows = positionedWindows || new Set();  // Track which windows are already positioned
+        this._positionedWindows = positionedWindows || new Set();
+        this._layout = layout;
+        this._currentZoneIndex = currentZoneIndex;
+        this._zoneWidgets = [];
 
         // Add to chrome and position fullscreen
         Main.layoutManager.addChrome(this);
@@ -37,24 +42,23 @@ export const WindowSelector = GObject.registerClass({
         // Build the selector UI
         this._buildUI();
 
-        // Handle clicks outside to cancel
-        this._signalIds.push(this.connect('button-press-event', (actor, event) => {
-            // Check if click is on background (not a window button)
-            const [x, y] = event.get_coords();
-            const target = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
-
-            if (target === this || target === this._background) {
-                this.emit('cancelled');
-                return Clutter.EVENT_STOP;
-            }
-
-            return Clutter.EVENT_PROPAGATE;
-        }));
-
         // Handle ESC key
         this._signalIds.push(this.connect('key-press-event', (actor, event) => {
             const symbol = event.get_key_symbol();
             if (symbol === Clutter.KEY_Escape) {
+                this.emit('cancelled');
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }));
+
+        // Handle background clicks - cancel if not clicking a button
+        this._signalIds.push(this.connect('button-press-event', (actor, event) => {
+            const [x, y] = event.get_coords();
+            const target = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+
+            // Only cancel if clicking on background (this widget), not on buttons
+            if (target === this) {
                 this.emit('cancelled');
                 return Clutter.EVENT_STOP;
             }
@@ -72,80 +76,146 @@ export const WindowSelector = GObject.registerClass({
     }
 
     _positionFullscreen() {
-        const monitor = Main.layoutManager.primaryMonitor;
+        // Get the monitor where the pointer currently is (active monitor)
+        const currentMonitorIndex = global.display.get_current_monitor();
+        const monitor = Main.layoutManager.monitors[currentMonitorIndex];
         if (!monitor) {
-            this._debug('No primary monitor found, cannot show window selector');
+            this._debug('No current monitor found, cannot show window selector');
             this.emit('cancelled');
             return;
         }
+        this._monitor = monitor;
+        this._monitorIndex = currentMonitorIndex;
+
+        // Get work area for zone calculations
+        this._workArea = Main.layoutManager.getWorkAreaForMonitor(currentMonitorIndex);
+
+        this._debug(`Positioning window selector on monitor ${currentMonitorIndex}: ${monitor.x},${monitor.y} ${monitor.width}x${monitor.height}`);
         this.set_position(monitor.x, monitor.y);
         this.set_size(monitor.width, monitor.height);
     }
 
-    _buildUI() {
-        // Semi-transparent dark background
-        this._background = new St.Bin({
-            style_class: 'window-selector-background',
-            reactive: true,
-            x_expand: true,
-            y_expand: true
-        });
-        this._background.set_style('background-color: rgba(0, 0, 0, 0.85);');
-        this.add_child(this._background);
+    /**
+     * Get current zone dimensions
+     */
+    getCurrentZoneDimensions() {
+        if (!this._layout || !this._workArea || this._currentZoneIndex >= this._layout.zones.length) {
+            return null;
+        }
+        const zone = this._layout.zones[this._currentZoneIndex];
+        return {
+            width: Math.round(zone.width * this._workArea.width),
+            height: Math.round(zone.height * this._workArea.height)
+        };
+    }
 
-        // Container for window thumbnails
-        const container = new St.BoxLayout({
-            vertical: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
+    /**
+     * Estimate minimum size for a window
+     */
+    _getWindowMinSize(window) {
+        let minWidth = 100;
+        let minHeight = 100;
+
+        try {
+            const frameRect = window.get_frame_rect();
+            // If window is already small, that's likely near its minimum
+            if (frameRect.width < 400) {
+                minWidth = Math.max(minWidth, frameRect.width);
+            }
+            if (frameRect.height < 300) {
+                minHeight = Math.max(minHeight, frameRect.height);
+            }
+        } catch (e) {
+            this._debug(`Error getting min size: ${e.message}`);
+        }
+
+        return { width: minWidth, height: minHeight };
+    }
+
+    /**
+     * Check if a window can fit in the current zone
+     */
+    _canWindowFitCurrentZone(window) {
+        const zoneDims = this.getCurrentZoneDimensions();
+        if (!zoneDims) {
+            return { fits: true }; // Can't determine, assume it fits
+        }
+
+        const minSize = this._getWindowMinSize(window);
+        return {
+            fits: zoneDims.width >= minSize.width && zoneDims.height >= minSize.height,
+            zoneWidth: zoneDims.width,
+            zoneHeight: zoneDims.height,
+            minWidth: minSize.width,
+            minHeight: minSize.height
+        };
+    }
+
+    _buildUI() {
+        // Container for centering content
+        this._container = new St.Bin({
             x_expand: true,
-            y_expand: true
+            y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.START,
+            style: 'padding-top: 40px;'
         });
-        this._background.set_child(container);
+        this.add_child(this._container);
+
+        // Content box - vertically stacks zone preview, title, grid, and controls
+        this._contentBox = new St.BoxLayout({
+            vertical: true,
+            x_align: Clutter.ActorAlign.CENTER
+        });
+        this._container.set_child(this._contentBox);
+
+        // Zone preview at top (if layout provided)
+        if (this._layout) {
+            this._buildZonePreview();
+        }
 
         // Title
         const title = new St.Label({
             text: 'Select a window to snap',
-            style_class: 'window-selector-title'
+            style: 'font-size: 24px; font-weight: bold; color: white; margin-top: 30px; margin-bottom: 20px;'
         });
-        title.set_style('font-size: 24pt; color: white; margin-bottom: 32px;');
-        container.add_child(title);
+        this._contentBox.add_child(title);
 
-        // Grid of window thumbnails
-        this._windowGrid = new St.Widget({
-            layout_manager: new Clutter.GridLayout({
-                orientation: Clutter.Orientation.HORIZONTAL
-            }),
-            x_align: Clutter.ActorAlign.CENTER
+        // Grid of window thumbnails - horizontal row
+        this._windowGrid = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 16px;'
         });
-        container.add_child(this._windowGrid);
+        this._contentBox.add_child(this._windowGrid);
 
         // Get all snapable windows and create buttons
         this._populateWindows();
 
+        // Bottom section with instructions and button
+        const bottomSection = new St.BoxLayout({
+            vertical: true,
+            style: 'margin-top: 40px;'
+        });
+        this._contentBox.add_child(bottomSection);
+
         // Subtitle instruction
         const subtitle = new St.Label({
-            text: 'Click a window, Skip this zone, or press ESC to cancel',
-            style_class: 'window-selector-subtitle'
+            text: 'Click a window to snap it, or press ESC to cancel',
+            style: 'font-size: 14px; color: rgba(255, 255, 255, 0.6); margin-bottom: 16px;'
         });
-        subtitle.set_style('font-size: 14pt; color: rgba(255, 255, 255, 0.7); margin-top: 20px;');
-        container.add_child(subtitle);
+        bottomSection.add_child(subtitle);
 
         // Skip button
         const skipButton = new St.Button({
-            label: 'Skip This Zone',
-            style_class: 'window-selector-skip-button',
-            reactive: true,
-            can_focus: true,
-            track_hover: true
+            label: 'Skip This Zone'
         });
         skipButton.set_style(`
-            background-color: rgba(230, 126, 34, 0.8);
-            border: 2px solid rgba(255, 255, 255, 0.4);
-            border-radius: 8px;
-            padding: 12px 24px;
-            margin-top: 12px;
-            font-size: 14pt;
+            background-color: rgba(230, 126, 34, 0.9);
+            border: none;
+            border-radius: 6px;
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: bold;
             color: white;
         `);
         skipButton.connect('clicked', () => {
@@ -155,39 +225,39 @@ export const WindowSelector = GObject.registerClass({
         skipButton.connect('enter-event', () => {
             skipButton.set_style(`
                 background-color: rgba(230, 126, 34, 1.0);
-                border: 2px solid rgba(255, 255, 255, 0.6);
-                border-radius: 8px;
-                padding: 12px 24px;
-                margin-top: 12px;
-                font-size: 14pt;
+                border: none;
+                border-radius: 6px;
+                padding: 10px 20px;
+                font-size: 14px;
+                font-weight: bold;
                 color: white;
             `);
         });
         skipButton.connect('leave-event', () => {
             skipButton.set_style(`
-                background-color: rgba(230, 126, 34, 0.8);
-                border: 2px solid rgba(255, 255, 255, 0.4);
-                border-radius: 8px;
-                padding: 12px 24px;
-                margin-top: 12px;
-                font-size: 14pt;
+                background-color: rgba(230, 126, 34, 0.9);
+                border: none;
+                border-radius: 6px;
+                padding: 10px 20px;
+                font-size: 14px;
+                font-weight: bold;
                 color: white;
             `);
         });
-        container.add_child(skipButton);
+        bottomSection.add_child(skipButton);
     }
 
     _populateWindows() {
         const workspace = global.workspace_manager.get_active_workspace();
         const windows = workspace.list_windows();
 
-        // Filter to only snapable windows
+        // Filter to snapable windows (including minimized, excluding already positioned)
         const snapableWindows = windows.filter(w => {
             return w.window_type === Meta.WindowType.NORMAL &&
                    w.allows_move() &&
                    w.allows_resize() &&
                    !w.is_fullscreen() &&
-                   !w.minimized;
+                   !this._positionedWindows.has(w);
         });
 
         // Sort by recency
@@ -198,17 +268,12 @@ export const WindowSelector = GObject.registerClass({
         // Get max windows from settings
         const maxWindowsSetting = this._settings.get_int('max-window-thumbnails');
         const maxWindows = Math.min(snapableWindows.length, maxWindowsSetting);
-        const gridLayout = this._windowGrid.layout_manager;
-        const columns = Math.min(4, Math.ceil(Math.sqrt(maxWindows)));
 
         for (let i = 0; i < maxWindows; i++) {
             const window = snapableWindows[i];
             const button = this._createWindowButton(window);
             this._windowButtons.push(button);
-
-            const row = Math.floor(i / columns);
-            const col = i % columns;
-            gridLayout.attach(button, col, row, 1, 1);
+            this._windowGrid.add_child(button);
 
             // Monitor window closure
             try {
@@ -230,6 +295,103 @@ export const WindowSelector = GObject.registerClass({
             noWindowsLabel.set_style('font-size: 18pt; color: rgba(255, 255, 255, 0.5);');
             this._windowGrid.add_child(noWindowsLabel);
         }
+    }
+
+    _buildZonePreview() {
+        // Layout name
+        const layoutName = new St.Label({
+            text: this._layout.name,
+            style: 'font-size: 20px; font-weight: bold; color: white; margin-bottom: 16px;'
+        });
+        this._contentBox.add_child(layoutName);
+
+        // Zone preview container - fixed size, don't expand
+        const previewWidth = 400;
+        const previewHeight = 250;
+
+        const previewBox = new St.Widget({
+            width: previewWidth,
+            height: previewHeight,
+            x_expand: false,
+            y_expand: false,
+            x_align: Clutter.ActorAlign.CENTER,
+            style: 'background-color: rgba(30, 30, 30, 0.95); border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 12px;',
+            layout_manager: new Clutter.FixedLayout()
+        });
+        this._contentBox.add_child(previewBox);
+
+        // Create zone widgets
+        const padding = 8;
+        const usableWidth = previewWidth - padding * 2;
+        const usableHeight = previewHeight - padding * 2;
+
+        for (let i = 0; i < this._layout.zones.length; i++) {
+            const zone = this._layout.zones[i];
+
+            const x = padding + Math.floor(zone.x * usableWidth);
+            const y = padding + Math.floor(zone.y * usableHeight);
+            const w = Math.max(1, Math.floor(zone.width * usableWidth) - 4);
+            const h = Math.max(1, Math.floor(zone.height * usableHeight) - 4);
+
+            const zoneWidget = new St.Bin({
+                width: w,
+                height: h,
+                x: x,
+                y: y
+            });
+
+            // Style based on zone state
+            let bgColor, borderStyle;
+            if (i === this._currentZoneIndex) {
+                // Current zone - bright blue
+                bgColor = 'rgba(53, 132, 228, 0.8)';
+                borderStyle = '3px solid white';
+            } else if (i < this._currentZoneIndex) {
+                // Already filled - green
+                bgColor = 'rgba(38, 162, 105, 0.6)';
+                borderStyle = '2px solid rgba(255,255,255,0.5)';
+            } else {
+                // Future zone - dim
+                bgColor = 'rgba(100, 100, 100, 0.4)';
+                borderStyle = '2px solid rgba(255,255,255,0.2)';
+            }
+            zoneWidget.set_style(`background-color: ${bgColor}; border: ${borderStyle}; border-radius: 6px;`);
+
+            // Add zone label
+            const zoneLabel = new St.Label({
+                text: zone.id || `${i + 1}`,
+                style: 'font-size: 12px; color: white; font-weight: bold;'
+            });
+            zoneWidget.set_child(zoneLabel);
+
+            previewBox.add_child(zoneWidget);
+            this._zoneWidgets.push({ zone, widget: zoneWidget, index: i });
+        }
+
+        this._previewBox = previewBox;
+    }
+
+    updateCurrentZone(newIndex) {
+        this._currentZoneIndex = newIndex;
+
+        // Update zone widget styles
+        for (let { widget, index } of this._zoneWidgets) {
+            let bgColor, borderStyle;
+            if (index === this._currentZoneIndex) {
+                bgColor = 'rgba(53, 132, 228, 0.8)';
+                borderStyle = '3px solid white';
+            } else if (index < this._currentZoneIndex) {
+                bgColor = 'rgba(38, 162, 105, 0.6)';
+                borderStyle = '2px solid rgba(255,255,255,0.5)';
+            } else {
+                bgColor = 'rgba(100, 100, 100, 0.4)';
+                borderStyle = '2px solid rgba(255,255,255,0.2)';
+            }
+            widget.set_style(`background-color: ${bgColor}; border: ${borderStyle}; border-radius: 6px;`);
+        }
+
+        // Refresh window list to recalculate which windows fit in the new zone
+        this.refresh();
     }
 
     _onWindowClosed(window, button) {
@@ -256,26 +418,40 @@ export const WindowSelector = GObject.registerClass({
         // Check if window is already positioned
         const isPositioned = this._positionedWindows.has(window);
 
-        // Base style depends on positioned state
-        const baseStyle = isPositioned
-            ? `background-color: rgba(38, 162, 105, 0.6);
-               border: 3px solid rgba(255, 255, 255, 0.5);
-               border-radius: 8px;
-               padding: 12px;
-               margin: 8px;
-               width: 240px;
-               height: 180px;`
-            : `background-color: rgba(40, 40, 40, 0.95);
-               border: 2px solid rgba(255, 255, 255, 0.2);
-               border-radius: 8px;
-               padding: 12px;
-               margin: 8px;
-               width: 240px;
-               height: 180px;`;
+        // Check if window can fit in current zone
+        const fitCheck = this._canWindowFitCurrentZone(window);
+        const canFit = fitCheck.fits;
+
+        // Base style depends on positioned state and fit status
+        let baseStyle;
+        if (isPositioned) {
+            baseStyle = `background-color: rgba(38, 162, 105, 0.4);
+               border: 2px solid rgba(38, 162, 105, 0.8);
+               border-radius: 12px;
+               padding: 16px;
+               width: 220px;
+               height: 160px;`;
+        } else if (!canFit) {
+            // Window won't fit - show with warning style
+            baseStyle = `background-color: rgba(192, 28, 40, 0.3);
+               border: 2px solid rgba(192, 28, 40, 0.7);
+               border-radius: 12px;
+               padding: 16px;
+               width: 220px;
+               height: 160px;`;
+        } else {
+            baseStyle = `background-color: rgba(255, 255, 255, 0.08);
+               border: 1px solid rgba(255, 255, 255, 0.15);
+               border-radius: 12px;
+               padding: 16px;
+               width: 220px;
+               height: 160px;`;
+        }
 
         button.set_style(baseStyle);
         button._baseStyle = baseStyle;
         button._isPositioned = isPositioned;
+        button._canFit = canFit;
 
         const box = new St.BoxLayout({
             vertical: true,
@@ -284,22 +460,51 @@ export const WindowSelector = GObject.registerClass({
         });
         button.set_child(box);
 
-        // Positioned indicator overlay (checkmark icon)
+        // Status indicator (positioned, won't fit, or minimized)
         if (isPositioned) {
             const positionedIndicator = new St.Label({
-                text: '✓ POSITIONED',
-                style_class: 'positioned-indicator'
+                text: '✓ Placed',
+                x_align: Clutter.ActorAlign.CENTER
             });
             positionedIndicator.set_style(`
-                font-size: 10pt;
-                color: rgba(255, 255, 255, 0.9);
-                background-color: rgba(38, 162, 105, 0.9);
-                padding: 4px 8px;
-                border-radius: 4px;
+                font-size: 11px;
+                color: white;
+                background-color: rgba(38, 162, 105, 1.0);
+                padding: 3px 10px;
+                border-radius: 10px;
                 font-weight: bold;
-                margin-bottom: 4px;
+                margin-bottom: 8px;
             `);
             box.add_child(positionedIndicator);
+        } else if (!canFit) {
+            const wontFitIndicator = new St.Label({
+                text: '⚠ Too Large',
+                x_align: Clutter.ActorAlign.CENTER
+            });
+            wontFitIndicator.set_style(`
+                font-size: 11px;
+                color: white;
+                background-color: rgba(192, 28, 40, 0.9);
+                padding: 3px 10px;
+                border-radius: 10px;
+                font-weight: bold;
+                margin-bottom: 8px;
+            `);
+            box.add_child(wontFitIndicator);
+        } else if (window.minimized) {
+            const minimizedIndicator = new St.Label({
+                text: '⊖ Minimized',
+                x_align: Clutter.ActorAlign.CENTER
+            });
+            minimizedIndicator.set_style(`
+                font-size: 11px;
+                color: white;
+                background-color: rgba(150, 150, 150, 0.8);
+                padding: 3px 10px;
+                border-radius: 10px;
+                margin-bottom: 8px;
+            `);
+            box.add_child(minimizedIndicator);
         }
 
         // Window thumbnail
@@ -312,13 +517,15 @@ export const WindowSelector = GObject.registerClass({
         // Window title
         const title = new St.Label({
             text: window.get_title() || 'Untitled',
-            style_class: 'window-title'
+            x_align: Clutter.ActorAlign.CENTER
         });
         title.set_style(`
-            font-size: 12pt;
+            font-size: 13px;
+            font-weight: 500;
             color: white;
-            margin-top: 8px;
-            max-width: 220px;
+            margin-top: 10px;
+            max-width: 200px;
+            text-align: center;
         `);
         title.clutter_text.ellipsize = 3; // PANGO_ELLIPSIZE_END
         box.add_child(title);
@@ -328,11 +535,11 @@ export const WindowSelector = GObject.registerClass({
         if (app) {
             const appLabel = new St.Label({
                 text: app.get_name(),
-                style_class: 'window-app-name'
+                x_align: Clutter.ActorAlign.CENTER
             });
             appLabel.set_style(`
-                font-size: 10pt;
-                color: rgba(255, 255, 255, 0.6);
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.5);
                 margin-top: 4px;
             `);
             appLabel.clutter_text.ellipsize = 3;
@@ -343,23 +550,31 @@ export const WindowSelector = GObject.registerClass({
         button._signalIds.push(button.connect('enter-event', () => {
             if (isPositioned) {
                 button.set_style(`
-                    background-color: rgba(192, 97, 203, 0.6);
-                    border: 3px solid rgba(255, 255, 255, 0.7);
-                    border-radius: 8px;
-                    padding: 12px;
-                    margin: 8px;
-                    width: 240px;
-                    height: 180px;
+                    background-color: rgba(192, 97, 203, 0.5);
+                    border: 2px solid rgba(192, 97, 203, 0.9);
+                    border-radius: 12px;
+                    padding: 16px;
+                    width: 220px;
+                    height: 160px;
+                `);
+            } else if (!canFit) {
+                // Warning hover - slightly brighter red
+                button.set_style(`
+                    background-color: rgba(192, 28, 40, 0.5);
+                    border: 2px solid rgba(192, 28, 40, 0.9);
+                    border-radius: 12px;
+                    padding: 16px;
+                    width: 220px;
+                    height: 160px;
                 `);
             } else {
                 button.set_style(`
-                    background-color: rgba(53, 132, 228, 0.6);
-                    border: 2px solid rgba(255, 255, 255, 0.6);
-                    border-radius: 8px;
-                    padding: 12px;
-                    margin: 8px;
-                    width: 240px;
-                    height: 180px;
+                    background-color: rgba(53, 132, 228, 0.4);
+                    border: 2px solid rgba(53, 132, 228, 0.8);
+                    border-radius: 12px;
+                    padding: 16px;
+                    width: 220px;
+                    height: 160px;
                 `);
             }
         }));
@@ -384,8 +599,26 @@ export const WindowSelector = GObject.registerClass({
 
     _createWindowThumbnail(window) {
         try {
+            // For minimized windows, use app icon instead of clone
+            if (window.minimized) {
+                const app = Shell.WindowTracker.get_default().get_window_app(window);
+                if (app) {
+                    const icon = app.create_icon_texture(64);
+                    icon.set_size(64, 64);
+                    return icon;
+                }
+                return null;
+            }
+
             const windowActor = window.get_compositor_private();
             if (!windowActor) {
+                // Fallback to app icon
+                const app = Shell.WindowTracker.get_default().get_window_app(window);
+                if (app) {
+                    const icon = app.create_icon_texture(64);
+                    icon.set_size(64, 64);
+                    return icon;
+                }
                 return null;
             }
 
@@ -405,6 +638,27 @@ export const WindowSelector = GObject.registerClass({
             this._debug(`Failed to create thumbnail: ${e.message}`);
             return null;
         }
+    }
+
+    show() {
+        this.visible = true;
+        this.opacity = 0;
+        this.ease({
+            opacity: 255,
+            duration: 150,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD
+        });
+    }
+
+    hide() {
+        this.ease({
+            opacity: 0,
+            duration: 150,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => {
+                this.visible = false;
+            }
+        });
     }
 
     refresh() {

@@ -30,8 +30,12 @@ export const LayoutOverlay = GObject.registerClass({
         this._hoveredZone = null;
         this._currentMonitor = Main.layoutManager.primaryMonitor;
 
-        // Add to uiGroup (visible on regular desktop, above windows)
-        Main.layoutManager.uiGroup.add_child(this);
+        // Add as chrome to ensure it's always on top of windows
+        Main.layoutManager.addChrome(this, {
+            affectsInputRegion: true,
+            affectsStruts: false,
+            trackFullscreen: false
+        });
         this._positionOverlay(this._currentMonitor);
 
         // Build the layout grid
@@ -952,7 +956,7 @@ export const LayoutOverlay = GObject.registerClass({
             this._settingsChangedId = null;
         }
 
-        Main.layoutManager.uiGroup.remove_child(this);
+        Main.layoutManager.removeChrome(this);
         super.destroy();
     }
 });
