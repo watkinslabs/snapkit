@@ -1,3 +1,4 @@
+import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -28,6 +29,7 @@ export class TileManager {
         this._resizingWindow = null;
         this._resizeStartRect = null;
         this._resizeEdges = null;
+        this._resizeStartPositions = null; // Store all window positions at resize start
 
         // Track move operations (to detect untile)
         this._movingWindow = null;
@@ -167,6 +169,9 @@ export class TileManager {
             this._resizeStartRect = window.get_frame_rect();
             this._resizeEdges = this._getResizeEdges(grabOp);
             this._debug(`Resize edges: ${this._resizeEdges ? this._resizeEdges.join(', ') : 'none'}`);
+
+            // Capture all window positions at resize start
+            this._resizeStartPositions = this._captureAllWindowPositions(info.monitorIndex, window);
         }
     }
 
@@ -237,19 +242,26 @@ export class TileManager {
             }
         }
 
+        // Log start vs end positions for all windows
+        // Defer logging to capture actual final positions after resize settles
+        const monitorIdx = info.monitorIndex;
+        const resizedWin = window;
+        const startPositions = this._resizeStartPositions;
+
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._logResizeComparisonDeferred(monitorIdx, resizedWin, startPositions);
+            return GLib.SOURCE_REMOVE;
+        });
+
         this._clearResizeState();
     }
 
     /**
-     * Layout-driven resize: update divider → re-resolve → re-snap all
+     * Pure pixel-based resize: the resized window is source of truth,
+     * sibling windows adjust based on pixel math (no fraction conversion)
      */
     _handleLayoutDrivenResize(window, info, edge, delta) {
         this._debug(`_handleLayoutDrivenResize: window="${window.get_title()}", zoneId=${info.zoneId}, edge=${edge}, delta=${delta}`);
-
-        if (!this._layoutManager) {
-            this._debug('No layout manager, cannot sync resize');
-            return;
-        }
 
         const group = this._tileGroups.get(info.monitorIndex);
         if (!group) {
@@ -259,60 +271,208 @@ export class TileManager {
 
         this._debug(`Tile group: layoutId=${group.layoutId}, windows=${group.windows.size}`);
 
-        const monitor = group.monitor;
-        if (!monitor) {
-            this._debug('No monitor in tile group');
-            return;
+        // Get both start and end rects
+        const startRect = this._resizeStartRect;
+        const endRect = window.get_frame_rect();
+        this._debug(`Resized window START rect: ${startRect.x},${startRect.y} ${startRect.width}x${startRect.height}`);
+        this._debug(`Resized window END rect: ${endRect.x},${endRect.y} ${endRect.width}x${endRect.height}`);
+
+        // Update stored zone info for resized window
+        if (info.zone) {
+            info.zone.windowRect = {
+                x: endRect.x,
+                y: endRect.y,
+                width: endRect.width,
+                height: endRect.height
+            };
+            info.zone.tileRect = { ...info.zone.windowRect };
         }
 
-        // Get work area
-        const workArea = Main.layoutManager.getWorkAreaForMonitor(info.monitorIndex);
-        this._debug(`WorkArea: ${workArea.width}x${workArea.height}`);
+        // Find and adjust sibling windows that share the resized edge
+        // Use START rect for adjacency detection, END rect for new positions
+        this._adjustSiblingWindows(group, window, info, edge, startRect, endRect);
+    }
 
-        // Step 1: Update the layout divider override
-        this._debug(`Calling handleResize for layout ${group.layoutId}`);
-        const overrideUpdated = this._layoutManager.handleResize(
-            group.layoutId,
-            info.zoneId,
-            edge,
-            delta,
-            workArea,
-            monitor
-        );
+    /**
+     * Adjust sibling windows based on the resized window's new position
+     * Use startRect for adjacency detection, endRect for calculating new positions
+     */
+    _adjustSiblingWindows(group, resizedWindow, resizedInfo, edge, startRect, endRect) {
+        const isHorizontalEdge = edge === 'left' || edge === 'right';
 
-        this._debug(`Override updated: ${overrideUpdated}`);
+        for (const [zoneId, siblingWindow] of group.windows) {
+            if (siblingWindow === resizedWindow) continue;
 
-        if (!overrideUpdated) {
-            this._debug(`Divider override not updated for ${edge} edge - layout may not be full-spec`);
-            // Still re-snap to ensure consistency
+            const siblingInfo = this._windowInfo.get(siblingWindow);
+            if (!siblingInfo || !siblingInfo.zone) continue;
+
+            const siblingRect = siblingWindow.get_frame_rect();
+            let newRect = null;
+
+            this._debug(`Checking sibling ${zoneId}: ${siblingRect.x},${siblingRect.y} ${siblingRect.width}x${siblingRect.height}`);
+
+            if (isHorizontalEdge) {
+                // Resized left or right edge - check for horizontal adjacency
+                if (edge === 'right') {
+                    // Resized window's right edge moved
+                    // Sibling on the right should adjust its left edge
+                    // Check adjacency using START rect (before resize)
+                    if (this._isAdjacentRight(startRect, siblingRect)) {
+                        // Use END rect for new position
+                        const resizedRight = endRect.x + endRect.width;
+                        newRect = {
+                            x: resizedRight,
+                            y: siblingRect.y,
+                            width: (siblingRect.x + siblingRect.width) - resizedRight,
+                            height: siblingRect.height
+                        };
+                        this._debug(`Sibling ${zoneId} was adjacent on right (startRect), adjusting: x=${newRect.x}, width=${newRect.width}`);
+                    }
+                } else if (edge === 'left') {
+                    // Resized window's left edge moved
+                    // Sibling on the left should adjust its right edge
+                    if (this._isAdjacentLeft(startRect, siblingRect)) {
+                        newRect = {
+                            x: siblingRect.x,
+                            y: siblingRect.y,
+                            width: endRect.x - siblingRect.x,
+                            height: siblingRect.height
+                        };
+                        this._debug(`Sibling ${zoneId} was adjacent on left (startRect), adjusting: width=${newRect.width}`);
+                    }
+                }
+            } else {
+                // Resized top or bottom edge - check for vertical adjacency
+                if (edge === 'bottom') {
+                    // Resized window's bottom edge moved
+                    // Sibling below should adjust its top edge
+                    if (this._isAdjacentBelow(startRect, siblingRect)) {
+                        const resizedBottom = endRect.y + endRect.height;
+                        newRect = {
+                            x: siblingRect.x,
+                            y: resizedBottom,
+                            width: siblingRect.width,
+                            height: (siblingRect.y + siblingRect.height) - resizedBottom
+                        };
+                        this._debug(`Sibling ${zoneId} was adjacent below (startRect), adjusting: y=${newRect.y}, height=${newRect.height}`);
+                    }
+                } else if (edge === 'top') {
+                    // Resized window's top edge moved
+                    // Sibling above should adjust its bottom edge
+                    if (this._isAdjacentAbove(startRect, siblingRect)) {
+                        newRect = {
+                            x: siblingRect.x,
+                            y: siblingRect.y,
+                            width: siblingRect.width,
+                            height: endRect.y - siblingRect.y
+                        };
+                        this._debug(`Sibling ${zoneId} was adjacent above (startRect), adjusting: height=${newRect.height}`);
+                    }
+                }
+            }
+
+            // Apply the new rect if we calculated one
+            // Defer to next frame to avoid conflicts with grab operation
+            if (newRect && newRect.width > 50 && newRect.height > 50) {
+                const targetRect = { ...newRect };
+                const targetZoneId = zoneId;
+                const targetWindow = siblingWindow;
+                const targetZoneInfo = siblingInfo.zone;
+
+                this._debug(`Scheduling sibling ${targetZoneId} adjustment to: ${targetRect.x},${targetRect.y} ${targetRect.width}x${targetRect.height}`);
+
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    try {
+                        // Verify window still exists
+                        targetWindow.get_title();
+
+                        this._debug(`Applying deferred move to sibling ${targetZoneId}`);
+                        targetWindow.move_resize_frame(
+                            true,
+                            Math.round(targetRect.x),
+                            Math.round(targetRect.y),
+                            Math.round(targetRect.width),
+                            Math.round(targetRect.height)
+                        );
+
+                        // Update stored zone info AFTER successful move
+                        if (targetZoneInfo) {
+                            targetZoneInfo.windowRect = { ...targetRect };
+                            targetZoneInfo.tileRect = { ...targetRect };
+                        }
+
+                        this._debug(`Adjusted sibling ${targetZoneId} to: ${targetRect.x},${targetRect.y} ${targetRect.width}x${targetRect.height}`);
+                    } catch (e) {
+                        this._debug(`Failed to adjust sibling ${targetZoneId}: ${e.message}`);
+                    }
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
         }
+    }
 
-        // Step 2: Re-resolve the layout with updated overrides
-        const rects = this._layoutManager.resolveLayoutRects(
-            group.layoutId,
-            workArea,
-            monitor
-        );
+    /**
+     * Check if siblingRect is adjacent to the right of resizedRect
+     */
+    _isAdjacentRight(resizedRect, siblingRect) {
+        const resizedRight = resizedRect.x + resizedRect.width;
+        // Sibling's left edge should be near resized's right edge (within tolerance)
+        // And they should overlap vertically
+        const horizontallyAdjacent = Math.abs(siblingRect.x - resizedRight) < 50;
+        const verticalOverlap = !(siblingRect.y >= resizedRect.y + resizedRect.height ||
+                                   siblingRect.y + siblingRect.height <= resizedRect.y);
+        return horizontallyAdjacent && verticalOverlap;
+    }
 
-        this._debug(`Resolved ${rects.size} zones after resize`);
+    /**
+     * Check if siblingRect is adjacent to the left of resizedRect
+     */
+    _isAdjacentLeft(resizedRect, siblingRect) {
+        const siblingRight = siblingRect.x + siblingRect.width;
+        const horizontallyAdjacent = Math.abs(siblingRight - resizedRect.x) < 50;
+        const verticalOverlap = !(siblingRect.y >= resizedRect.y + resizedRect.height ||
+                                   siblingRect.y + siblingRect.height <= resizedRect.y);
+        return horizontallyAdjacent && verticalOverlap;
+    }
 
-        if (rects.size === 0) {
-            this._debug('No rects resolved');
-            return;
-        }
+    /**
+     * Check if siblingRect is adjacent below resizedRect
+     */
+    _isAdjacentBelow(resizedRect, siblingRect) {
+        const resizedBottom = resizedRect.y + resizedRect.height;
+        const verticallyAdjacent = Math.abs(siblingRect.y - resizedBottom) < 50;
+        const horizontalOverlap = !(siblingRect.x >= resizedRect.x + resizedRect.width ||
+                                     siblingRect.x + siblingRect.width <= resizedRect.x);
+        return verticallyAdjacent && horizontalOverlap;
+    }
 
-        // Step 3: Re-snap ALL windows to their zones
-        this._debug('Re-snapping all windows in tile group');
-        this._reapplyAllWindowsInGroup(group, rects);
+    /**
+     * Check if siblingRect is adjacent above resizedRect
+     */
+    _isAdjacentAbove(resizedRect, siblingRect) {
+        const siblingBottom = siblingRect.y + siblingRect.height;
+        const verticallyAdjacent = Math.abs(siblingBottom - resizedRect.y) < 50;
+        const horizontalOverlap = !(siblingRect.x >= resizedRect.x + resizedRect.width ||
+                                     siblingRect.x + siblingRect.width <= resizedRect.x);
+        return verticallyAdjacent && horizontalOverlap;
     }
 
     /**
      * Re-apply window positions for all windows in a tile group
+     * @param {object} group - The tile group
+     * @param {Map} rects - Zone rectangles from layout resolution
+     * @param {Meta.Window} excludeWindow - Optional window to skip (the one being resized)
      */
-    _reapplyAllWindowsInGroup(group, rects) {
-        this._debug(`Re-applying ${group.windows.size} windows to their zones`);
+    _reapplyAllWindowsInGroup(group, rects, excludeWindow = null) {
+        this._debug(`Re-applying ${group.windows.size} windows to their zones${excludeWindow ? ' (excluding resized window)' : ''}`);
 
         for (const [zoneId, window] of group.windows) {
+            // Skip the window that was just resized - it's already in the right place
+            if (excludeWindow && window === excludeWindow) {
+                this._debug(`Skipping resized window in zone ${zoneId} - keeping user's position`);
+                continue;
+            }
+
             const zoneRects = rects.get(zoneId);
             if (!zoneRects) {
                 this._debug(`No rect found for zone ${zoneId}`);
@@ -374,6 +534,138 @@ export class TileManager {
         this._resizingWindow = null;
         this._resizeStartRect = null;
         this._resizeEdges = null;
+        this._resizeStartPositions = null;
+    }
+
+    /**
+     * Capture positions of all windows AND their zone info in a tile group
+     */
+    _captureAllWindowPositions(monitorIndex, resizedWindow) {
+        const group = this._tileGroups.get(monitorIndex);
+        if (!group) return null;
+
+        const positions = new Map();
+        for (const [zoneId, window] of group.windows) {
+            try {
+                const rect = window.get_frame_rect();
+                const isResized = window === resizedWindow;
+                const info = this._windowInfo.get(window);
+                const zone = info?.zone;
+
+                positions.set(zoneId, {
+                    title: window.get_title(),
+                    isResized,
+                    // Window position
+                    window: {
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: rect.height
+                    },
+                    // Stored zone/grid info
+                    zone: zone ? {
+                        windowRect: zone.windowRect ? { ...zone.windowRect } : null,
+                        tileRect: zone.tileRect ? { ...zone.tileRect } : null
+                    } : null
+                });
+            } catch (e) {
+                // Window may be destroyed
+            }
+        }
+        return positions;
+    }
+
+    /**
+     * Log start and end positions of all windows AND grids for debugging
+     * Deferred version that takes startPositions as parameter
+     */
+    _logResizeComparisonDeferred(monitorIndex, resizedWindow, startPositions) {
+        if (!startPositions) {
+            this._debug('No start positions captured');
+            return;
+        }
+
+        const group = this._tileGroups.get(monitorIndex);
+        if (!group) {
+            this._debug('No tile group found');
+            return;
+        }
+
+        this._debug('');
+        this._debug('╔══════════════════════════════════════════════════════════════╗');
+        this._debug('║          RESIZE COMPARISON: START vs END                     ║');
+        this._debug('╚══════════════════════════════════════════════════════════════╝');
+        this._debug(`Layout: ${group.layoutId}, Windows: ${group.windows.size}`);
+        this._debug('');
+
+        for (const [zoneId, window] of group.windows) {
+            const startData = startPositions.get(zoneId);
+            const info = this._windowInfo.get(window);
+            const endZone = info?.zone;
+
+            try {
+                const endRect = window.get_frame_rect();
+                const isResized = window === resizedWindow;
+                const marker = isResized ? ' [RESIZED]' : '';
+
+                this._debug(`┌─── Zone: ${zoneId}${marker} ───`);
+
+                // WINDOW positions
+                this._debug('│ WINDOW:');
+                if (startData?.window) {
+                    const sw = startData.window;
+                    this._debug(`│   START: x=${sw.x}, y=${sw.y}, w=${sw.width}, h=${sw.height}`);
+                } else {
+                    this._debug(`│   START: (not captured)`);
+                }
+                this._debug(`│   END:   x=${endRect.x}, y=${endRect.y}, w=${endRect.width}, h=${endRect.height}`);
+
+                if (startData?.window) {
+                    const sw = startData.window;
+                    const dx = endRect.x - sw.x;
+                    const dy = endRect.y - sw.y;
+                    const dw = endRect.width - sw.width;
+                    const dh = endRect.height - sw.height;
+                    if (dx !== 0 || dy !== 0 || dw !== 0 || dh !== 0) {
+                        this._debug(`│   DELTA: dx=${dx}, dy=${dy}, dw=${dw}, dh=${dh}`);
+                    }
+                }
+
+                // GRID/ZONE stored info
+                this._debug('│ GRID (stored zone.windowRect):');
+                if (startData?.zone?.windowRect) {
+                    const sz = startData.zone.windowRect;
+                    this._debug(`│   START: x=${sz.x}, y=${sz.y}, w=${sz.width}, h=${sz.height}`);
+                } else {
+                    this._debug(`│   START: (no zone.windowRect)`);
+                }
+                if (endZone?.windowRect) {
+                    const ez = endZone.windowRect;
+                    this._debug(`│   END:   x=${ez.x}, y=${ez.y}, w=${ez.width}, h=${ez.height}`);
+                } else {
+                    this._debug(`│   END:   (no zone.windowRect)`);
+                }
+
+                // Calculate grid delta if both exist
+                if (startData?.zone?.windowRect && endZone?.windowRect) {
+                    const sz = startData.zone.windowRect;
+                    const ez = endZone.windowRect;
+                    const dx = ez.x - sz.x;
+                    const dy = ez.y - sz.y;
+                    const dw = ez.width - sz.width;
+                    const dh = ez.height - sz.height;
+                    if (dx !== 0 || dy !== 0 || dw !== 0 || dh !== 0) {
+                        this._debug(`│   DELTA: dx=${dx}, dy=${dy}, dw=${dw}, dh=${dh}`);
+                    }
+                }
+
+                this._debug('└───────────────────────────────');
+                this._debug('');
+            } catch (e) {
+                this._debug(`Zone ${zoneId}: (window destroyed)`);
+            }
+        }
+        this._debug('═══════════════════════════════════════════════════════════════');
     }
 
     /**

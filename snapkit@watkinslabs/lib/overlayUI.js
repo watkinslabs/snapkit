@@ -727,6 +727,19 @@ export const LayoutOverlay = GObject.registerClass({
         const gridColor = this._sanitizeColor(
             this._settings.get_string('overlay-grid-color')
         );
+        const zoneTooSmallColor = this._sanitizeColor(
+            this._settings.get_string('zone-too-small-color')
+        );
+
+        // Get minimum zone size settings
+        const minZoneWidth = this._settings.get_int('zone-min-width');
+        const minZoneHeight = this._settings.get_int('zone-min-height');
+
+        // Get work area for the current monitor to calculate actual zone sizes
+        let workArea = null;
+        if (this._currentMonitor) {
+            workArea = Main.layoutManager.getWorkAreaForMonitor(this._currentMonitor.index);
+        }
 
         // Get scale for proper sizing
         let scale = 1.0;
@@ -755,9 +768,21 @@ export const LayoutOverlay = GObject.registerClass({
                 zoneContainer.set_style(`border: ${borderWidth}px solid ${gridColor}; border-radius: ${zoneContainerRadius}px; background-color: ${layoutCardBg};`);
             }
 
-            // Apply zone styling
-            for (let {widget: zoneWidget} of layoutWidget._zoneWidgets) {
-                zoneWidget.set_style(`background-color: ${zoneBg}; border: 1px solid ${zoneBorder}; border-radius: ${zoneBorderRadius}px; box-sizing: border-box; margin: ${zoneMargin}px;`);
+            // Apply zone styling - check if zone is too small
+            for (let {zone, widget: zoneWidget} of layoutWidget._zoneWidgets) {
+                let bgColor = zoneBg;
+
+                // Check if zone would be too small on the actual monitor
+                if (workArea && zone) {
+                    const actualWidth = Math.round(zone.width * workArea.width);
+                    const actualHeight = Math.round(zone.height * workArea.height);
+
+                    if (actualWidth < minZoneWidth || actualHeight < minZoneHeight) {
+                        bgColor = zoneTooSmallColor;
+                    }
+                }
+
+                zoneWidget.set_style(`background-color: ${bgColor}; border: 1px solid ${zoneBorder}; border-radius: ${zoneBorderRadius}px; box-sizing: border-box; margin: ${zoneMargin}px;`);
             }
         }
     }

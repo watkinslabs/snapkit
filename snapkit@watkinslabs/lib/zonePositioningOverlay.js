@@ -130,8 +130,30 @@ export const ZonePositioningOverlay = GObject.registerClass({
             reactive: false
         });
 
+        // Check if zone is too small (Zone Splitting feature)
+        const monitor = Main.layoutManager.primaryMonitor;
+        const workArea = monitor ? Main.layoutManager.getWorkAreaForMonitor(monitor.index) : null;
+        const minZoneWidth = this._settings.get_int('zone-min-width');
+        const minZoneHeight = this._settings.get_int('zone-min-height');
+        const tooSmallColor = this._settings.get_string('zone-too-small-color');
+
+        let isTooSmall = false;
+        if (workArea) {
+            const actualWidth = Math.round(zone.width * workArea.width);
+            const actualHeight = Math.round(zone.height * workArea.height);
+            isTooSmall = actualWidth < minZoneWidth || actualHeight < minZoneHeight;
+        }
+
         // Style based on whether this is the current zone
-        if (index === this._currentZoneIndex) {
+        if (isTooSmall) {
+            // Zone too small - show warning color
+            zoneWidget.set_style(`
+                background-color: ${tooSmallColor};
+                border: 2px solid rgba(255, 255, 255, 0.5);
+                border-radius: 8px;
+                box-sizing: border-box;
+            `);
+        } else if (index === this._currentZoneIndex) {
             // Current zone - bright highlight
             zoneWidget.set_style(`
                 background-color: rgba(53, 132, 228, 0.7);
@@ -159,6 +181,7 @@ export const ZonePositioningOverlay = GObject.registerClass({
 
         zoneWidget._zone = zone;
         zoneWidget._index = index;
+        zoneWidget._isTooSmall = isTooSmall;
 
         return zoneWidget;
     }
@@ -188,9 +211,19 @@ export const ZonePositioningOverlay = GObject.registerClass({
         this._debug(`Updating current zone to index ${newIndex}`);
         this._currentZoneIndex = newIndex;
 
+        const tooSmallColor = this._settings.get_string('zone-too-small-color');
+
         // Update zone widget styles
         for (let {widget: zoneWidget, index} of this._zoneWidgets) {
-            if (index === this._currentZoneIndex) {
+            // Always show warning color for zones that are too small
+            if (zoneWidget._isTooSmall) {
+                zoneWidget.set_style(`
+                    background-color: ${tooSmallColor};
+                    border: 2px solid rgba(255, 255, 255, 0.5);
+                    border-radius: 8px;
+                    box-sizing: border-box;
+                `);
+            } else if (index === this._currentZoneIndex) {
                 // Current zone - bright highlight
                 zoneWidget.set_style(`
                     background-color: rgba(53, 132, 228, 0.7);

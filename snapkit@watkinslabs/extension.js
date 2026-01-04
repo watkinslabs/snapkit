@@ -52,6 +52,9 @@ export default class SnapKitExtension extends Extension {
         // Trigger zone polling (for when windows block motion events)
         this._triggerPollId = null;
 
+        // Failsafe timer to ensure overlay closes when mouse leaves
+        this._openStateCheckId = null;
+
         // SNAP MODE state
         this._snapModeLayout = null;      // Current layout in SNAP MODE
         this._snapModeZones = [];         // Zones in the current layout
@@ -200,7 +203,7 @@ export default class SnapKitExtension extends Extension {
             this._debug('Tile manager created');
 
             this._debug('Creating snap preview overlay...');
-            this._snapPreview = new SnapPreviewOverlay(this._settings, this._layoutManager);
+            this._snapPreview = new SnapPreviewOverlay(this._settings, this._layoutManager, this._tileManager);
             this._debug('Snap preview overlay created');
 
             // Create overlays and show hitboxes
@@ -263,6 +266,9 @@ export default class SnapKitExtension extends Extension {
 
         // Clear trigger polling
         this._stopTriggerPolling();
+
+        // Clear open state failsafe check
+        this._stopOpenStateCheck();
 
         // Restore GNOME edge tiling if we modified it
         this._restoreMutterEdgeTiling();
@@ -336,26 +342,32 @@ export default class SnapKitExtension extends Extension {
             this._draggedWindow = window;
             this._snapDisabledForCurrentDrag = false; // Reset snap disable flag
 
-            // Get the monitor where the window is
-            const windowRect = window.get_frame_rect();
-            const monitor = Main.layoutManager.monitors.find(m =>
-                windowRect.x >= m.x && windowRect.x < m.x + m.width &&
-                windowRect.y >= m.y && windowRect.y < m.y + m.height
-            ) || Main.layoutManager.primaryMonitor;
-
-            // Get the layout for this monitor
-            const layoutId = this._monitorLayouts.get(monitor.index);
-            this._debug(`Monitor ${monitor.index} has layout: ${layoutId || 'none (using default)'}`);
+            // Initialize shake detection state (if enabled)
+            if (this._settings.get_boolean('shake-to-dismiss-enabled')) {
+                this._shakeState = {
+                    lastX: null,
+                    lastDirection: 0, // -1 = left, 0 = none, 1 = right
+                    directionChanges: [], // timestamps of direction changes
+                    shakeThreshold: this._settings.get_int('shake-threshold'),
+                    shakeTimeWindow: this._settings.get_int('shake-time-window'),
+                    minMovement: this._settings.get_int('shake-min-movement'),
+                };
+            } else {
+                this._shakeState = null;
+            }
 
             // Show snap preview if enabled
+            // The snap preview now handles per-monitor layouts internally
             if (this._settings.get_boolean('snap-preview-enabled') && this._snapPreview) {
                 // Check if snap-disable key is held
                 if (!this._isSnapDisableKeyHeld()) {
-                    this._snapPreview.show(layoutId);
-                    this._debug(`Snap preview shown with layout: ${layoutId || 'default'}`);
+                    // Show prepares overlays for all monitors (hidden initially)
+                    this._snapPreview.show();
+                    this._debug(`Snap preview initialized for all monitors`);
 
                     // Start polling cursor position during drag
                     // (motion events don't fire during grab operations)
+                    // This will also call updateVisibility to show the right monitor's grid
                     this._startDragPolling();
 
                     // Listen for key presses to detect Escape/Space during drag
@@ -429,6 +441,52 @@ export default class SnapKitExtension extends Extension {
             }
 
             const [x, y] = global.get_pointer();
+
+            // Shake detection - rapid left-right movements dismiss the grid
+            if (this._shakeState && !this._snapDisabledForCurrentDrag) {
+                const now = Date.now();
+                const state = this._shakeState;
+
+                if (state.lastX !== null) {
+                    const deltaX = x - state.lastX;
+
+                    // Only count significant movements
+                    if (Math.abs(deltaX) >= state.minMovement) {
+                        const newDirection = deltaX > 0 ? 1 : -1;
+
+                        // Check for direction change
+                        if (state.lastDirection !== 0 && newDirection !== state.lastDirection) {
+                            state.directionChanges.push(now);
+                            this._debug(`Shake: direction change detected (${state.directionChanges.length} changes)`);
+
+                            // Clean up old direction changes outside time window
+                            state.directionChanges = state.directionChanges.filter(
+                                t => now - t < state.shakeTimeWindow
+                            );
+
+                            // Check if we've hit the threshold
+                            if (state.directionChanges.length >= state.shakeThreshold) {
+                                this._debug(`Shake detected! Disabling snap preview`);
+                                this._snapPreview.hide();
+                                this._snapDisabledForCurrentDrag = true;
+                                this._shakeState = null;
+                                return GLib.SOURCE_CONTINUE;
+                            }
+                        }
+
+                        state.lastDirection = newDirection;
+                        state.lastX = x;
+                    }
+                } else {
+                    state.lastX = x;
+                }
+            }
+
+            // Update which monitor's overlay is visible based on cursor position
+            // This ensures only the current monitor shows its grid
+            this._snapPreview.updateVisibility(x, y);
+
+            // Update zone highlight within the visible overlay
             const zone = this._snapPreview.updateHighlight(x, y);
 
             if (zone) {
@@ -505,6 +563,42 @@ export default class SnapKitExtension extends Extension {
         }
     }
 
+    /**
+     * Start failsafe polling to ensure overlay closes when mouse leaves
+     * This handles cases where motion events are missed
+     */
+    _startOpenStateCheck(monitor) {
+        this._stopOpenStateCheck();
+
+        // Poll every 200ms to check if mouse is still over the overlay
+        this._openStateCheckId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+            // Only check when in OPEN state
+            if (this._overlayState !== OverlayState.OPEN) {
+                this._openStateCheckId = null;
+                return GLib.SOURCE_REMOVE;
+            }
+
+            const [x, y] = global.get_pointer();
+            const overlay = this._overlays.get(monitor.index);
+
+            if (!overlay || !this._isOverOverlay(x, y, overlay)) {
+                this._debug(`Failsafe: mouse outside overlay, closing`);
+                this._transitionToClosed();
+                this._openStateCheckId = null;
+                return GLib.SOURCE_REMOVE;
+            }
+
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopOpenStateCheck() {
+        if (this._openStateCheckId) {
+            GLib.source_remove(this._openStateCheckId);
+            this._openStateCheckId = null;
+        }
+    }
+
     _onGrabEnd(display, window, grabOp) {
         if (grabOp === Meta.GrabOp.MOVING) {
             this._debug(`Grab end - checking auto-snap`);
@@ -577,7 +671,7 @@ export default class SnapKitExtension extends Extension {
      * Auto-snap a window to a zone
      */
     _autoSnapToZone(window, zone) {
-        this._debug(`_autoSnapToZone called for zone ${zone.id}`);
+        this._debug(`_autoSnapToZone called for zone ${zone.id}, subZone: ${zone.subZone || 'none'}`);
 
         if (!zone.windowRect) {
             this._debug(`Zone ${zone.id} has no windowRect, cannot snap`);
@@ -599,20 +693,60 @@ export default class SnapKitExtension extends Extension {
 
             // Register with tile manager
             if (this._tileManager && this._snapPreview) {
-                const layout = this._snapPreview.getCurrentLayout();
+                let layout = this._snapPreview.getCurrentLayout();
+                let effectiveZone = zone;
+                let effectiveLayoutId = null;
+
+                // Check if this is a sub-zone split drop
+                if (zone.subZone && zone.subZone !== 'full' && layout) {
+                    this._debug(`Sub-zone split detected: ${zone.subZone} on zone ${zone.id}`);
+
+                    // Create a split layout for proper tile management
+                    const splitResult = this._layoutManager.createSplitLayout(
+                        layout,
+                        zone.id,
+                        zone.subZone
+                    );
+
+                    if (splitResult) {
+                        layout = splitResult.layout;
+                        effectiveLayoutId = this._layoutManager.getLayoutId(layout);
+
+                        // Create a zone object with the new zone ID
+                        effectiveZone = {
+                            id: splitResult.newZoneId,
+                            windowRect: zone.windowRect,
+                            tileRect: zone.windowRect, // Use same rect for now
+                            siblingZoneId: splitResult.siblingZoneId
+                        };
+
+                        this._debug(`Created split layout: ${effectiveLayoutId}, new zone: ${effectiveZone.id}`);
+
+                        // Update the monitor layout to use the split layout
+                        const monitor = Main.layoutManager.monitors.find(m =>
+                            rect.x >= m.x && rect.x < m.x + m.width
+                        );
+                        if (monitor) {
+                            this._monitorLayouts.set(monitor.index, effectiveLayoutId);
+                            this._saveMonitorLayouts();
+                        }
+                    }
+                }
+
                 if (layout) {
                     const monitor = Main.layoutManager.monitors.find(m =>
                         rect.x >= m.x && rect.x < m.x + m.width
                     );
                     if (monitor) {
+                        const layoutId = effectiveLayoutId || this._layoutManager.getLayoutId(layout);
                         this._tileManager.registerSnappedWindow(
                             window,
-                            this._layoutManager.getLayoutId(layout),
-                            zone,
+                            layoutId,
+                            effectiveZone,
                             monitor.index,
                             layout
                         );
-                        this._debug(`Window registered with tile manager`);
+                        this._debug(`Window registered with tile manager using layout: ${layoutId}`);
                     }
                 }
             }
@@ -968,6 +1102,10 @@ export default class SnapKitExtension extends Extension {
                     this._debug(`ERROR stack: ${e.stack}`);
                 }
             }
+
+            // Start failsafe timer to ensure overlay closes if mouse leaves
+            this._startOpenStateCheck(monitor);
+
             this._debug(`=== TRANSITION TO OPEN END ===`);
         } catch (e) {
             this._debug(`ERROR in _transitionToOpen: ${e.message}`);
@@ -978,6 +1116,9 @@ export default class SnapKitExtension extends Extension {
     _transitionToClosed() {
         this._debug(`=== TRANSITION TO CLOSED START ===`);
         this._debug(`Transitioning to CLOSED state`);
+
+        // Stop the failsafe timer
+        this._stopOpenStateCheck();
 
         try {
             this._overlayState = OverlayState.CLOSED;
@@ -1065,6 +1206,7 @@ export default class SnapKitExtension extends Extension {
 
             // Save this layout for THIS monitor
             this._monitorLayouts.set(monitorIndex, layoutId);
+            this._saveMonitorLayouts(); // Persist to GSettings
             this._debug(`Saved ${layoutId} as active layout for monitor ${monitorIndex}`);
 
             // Clear any existing tile group on this monitor for the new layout
@@ -1283,11 +1425,9 @@ export default class SnapKitExtension extends Extension {
                     this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex, this._snapModeFilledZones);
                 }
 
-                // Refresh window selector for next zone (reuse instead of recreate)
+                // Refresh window selector for next zone (in-place update, no hide/show to avoid flicker)
                 if (this._windowSelector) {
-                    this._windowSelector.hide();
                     this._windowSelector.refresh();
-                    this._windowSelector.show();
                 }
 
                 // Check if there are any unpositioned windows left
@@ -1319,11 +1459,9 @@ export default class SnapKitExtension extends Extension {
                 this._debug(`Removed window from positioned set, total positioned: ${this._positionedWindows.size}`);
             }
 
-            // Refresh window selector to update UI
+            // Refresh window selector to update UI (in-place, no hide/show to avoid flicker)
             if (this._windowSelector) {
-                this._windowSelector.hide();
                 this._windowSelector.refresh();
-                this._windowSelector.show();
             }
 
             this._debug(`=== WINDOW DESELECTED END ===`);
@@ -1404,11 +1542,9 @@ export default class SnapKitExtension extends Extension {
                     this._windowSelector.updateCurrentZone(this._snapModeCurrentIndex, this._snapModeFilledZones);
                 }
 
-                // Refresh window selector for next zone
+                // Refresh window selector for next zone (in-place, no hide/show to avoid flicker)
                 if (this._windowSelector) {
-                    this._windowSelector.hide();
                     this._windowSelector.refresh();
-                    this._windowSelector.show();
                 }
             } else {
                 this._debug(`All zones processed, exiting SNAP MODE`);

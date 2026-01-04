@@ -401,6 +401,9 @@ function applyRounding(sizes, available) {
  * Find which divider was affected by a resize operation
  * Given a leaf that was resized and which edge moved, find the divider path
  *
+ * IMPORTANT: We want the INNERMOST (deepest) split that controls this edge,
+ * not the outermost. This ensures nested splits resize correctly.
+ *
  * @param {object} layout - The layout
  * @param {string} leafId - The leaf that was resized
  * @param {string} edge - Which edge moved: 'left', 'right', 'top', 'bottom'
@@ -411,8 +414,8 @@ export function findDividerForResize(layout, leafId, edge) {
     const leafPath = findNodePath(layout.root, leafId, []);
     if (!leafPath) return null;
 
-    // Walk up the tree to find the split that contains this edge
-    // The edge we're looking for depends on the split direction
+    // Walk DOWN the tree to find ALL splits that could control this edge
+    // Then return the INNERMOST (deepest) one
 
     // For 'left' or 'right' edge: need a 'col' split (horizontal arrangement)
     // For 'top' or 'bottom' edge: need a 'row' split (vertical arrangement)
@@ -420,7 +423,7 @@ export function findDividerForResize(layout, leafId, edge) {
 
     let node = layout.root;
     let splitPath = [];
-    let dividerIndex = -1;
+    let bestMatch = null;  // Track the innermost valid match
 
     for (let i = 0; i < leafPath.length; i++) {
         const childIndex = leafPath[i];
@@ -430,6 +433,7 @@ export function findDividerForResize(layout, leafId, edge) {
 
             if ((needsColSplit && isColSplit) || (!needsColSplit && !isColSplit)) {
                 // This split controls the edge we care about
+                let dividerIndex;
                 if (edge === 'right' || edge === 'bottom') {
                     // Right/bottom edge is the divider AFTER this child
                     dividerIndex = childIndex;
@@ -440,8 +444,9 @@ export function findDividerForResize(layout, leafId, edge) {
 
                 // Only valid if divider is between two children
                 if (dividerIndex >= 0 && dividerIndex < node.children.length - 1) {
-                    return {
-                        splitPath,
+                    // This is a valid match - save it but keep looking for deeper ones
+                    bestMatch = {
+                        splitPath: [...splitPath],  // Copy current path
                         dividerIndex,
                         direction: node.dir
                     };
@@ -453,7 +458,8 @@ export function findDividerForResize(layout, leafId, edge) {
         }
     }
 
-    return null;
+    // Return the innermost (deepest) valid match
+    return bestMatch;
 }
 
 /**
@@ -485,7 +491,7 @@ function findNodePath(node, targetId, currentPath) {
  * @param {number[]} splitPath - Path to the split node
  * @param {number} dividerIndex - Which divider (between child i and i+1)
  * @param {number} deltaPixels - How many pixels the divider moved
- * @param {number} axisLength - Total length along the split axis
+ * @param {number} axisLength - Total length along the split axis (for this specific split)
  * @returns {{child_index: number, size: object}[]}
  */
 export function calculateDividerDrag(layout, splitPath, dividerIndex, deltaPixels, axisLength) {
@@ -503,24 +509,40 @@ export function calculateDividerDrag(layout, splitPath, dividerIndex, deltaPixel
     const specA = getSizeSpec(childA);
     const specB = getSizeSpec(childB);
 
-    // Convert current sizes to pixels (approximate)
-    // For frac specs, estimate based on current resolution
-    // This is simplified - a full implementation would track resolved sizes
+    // Calculate TOTAL weight of ALL children in this split (not just A and B)
+    let totalFracWeight = 0;
+    let totalPxSize = 0;
+    for (const child of node.children) {
+        const spec = getSizeSpec(child);
+        if (spec.kind === 'frac') {
+            totalFracWeight += spec.value;
+        } else if (spec.kind === 'px') {
+            totalPxSize += spec.value;
+        }
+    }
+
+    // Available space for frac children
+    const gapInner = node.gap_inner ?? 0;
+    const totalGaps = gapInner * (node.children.length - 1);
+    const availableForFrac = Math.max(0, axisLength - totalPxSize - totalGaps);
 
     if (specA.kind === 'frac' && specB.kind === 'frac') {
         // Both are fractional - adjust weights
-        const totalWeight = specA.value + specB.value;
-        const pixelsPerWeight = axisLength / totalWeight;
+        // Calculate current pixel sizes for A and B based on their proportion of total frac weight
+        const pixelsPerFracUnit = totalFracWeight > 0 ? availableForFrac / totalFracWeight : 0;
 
-        const currentPixelsA = specA.value * pixelsPerWeight;
-        const currentPixelsB = specB.value * pixelsPerWeight;
+        const currentPixelsA = specA.value * pixelsPerFracUnit;
+        const currentPixelsB = specB.value * pixelsPerFracUnit;
 
+        // Apply delta
         const newPixelsA = Math.max(50, currentPixelsA + deltaPixels);
         const newPixelsB = Math.max(50, currentPixelsB - deltaPixels);
 
-        // Convert back to weights (normalized to original total)
-        const newWeightA = (newPixelsA / (newPixelsA + newPixelsB)) * totalWeight;
-        const newWeightB = (newPixelsB / (newPixelsA + newPixelsB)) * totalWeight;
+        // Convert back to frac values (maintaining same scale as original)
+        // The ratio of A to B changes, but we keep them proportional to other siblings
+        const combinedWeight = specA.value + specB.value;
+        const newWeightA = (newPixelsA / (newPixelsA + newPixelsB)) * combinedWeight;
+        const newWeightB = (newPixelsB / (newPixelsA + newPixelsB)) * combinedWeight;
 
         return [
             { child_index: dividerIndex, size: { kind: 'frac', value: newWeightA } },
@@ -529,7 +551,7 @@ export function calculateDividerDrag(layout, splitPath, dividerIndex, deltaPixel
     }
 
     if (specA.kind === 'px') {
-        // A is fixed, adjust it
+        // A is fixed pixel size, adjust it directly
         const newValue = Math.max(specA.min_px ?? 50, (specA.value ?? 0) + deltaPixels);
         return [
             { child_index: dividerIndex, size: { ...specA, value: newValue } }
@@ -537,7 +559,7 @@ export function calculateDividerDrag(layout, splitPath, dividerIndex, deltaPixel
     }
 
     if (specB.kind === 'px') {
-        // B is fixed, adjust it
+        // B is fixed pixel size, adjust it directly
         const newValue = Math.max(specB.min_px ?? 50, (specB.value ?? 0) - deltaPixels);
         return [
             { child_index: dividerIndex + 1, size: { ...specB, value: newValue } }

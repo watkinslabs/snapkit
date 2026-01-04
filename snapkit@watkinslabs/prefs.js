@@ -206,6 +206,61 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         appearancePage.add(zoneColorsGroup);
 
+        // Zone Splitting - Visual feedback for zones too small for windows
+        const zoneSplittingGroup = new Adw.PreferencesGroup({
+            title: 'Zone Splitting',
+            description: 'Visual feedback when zones are too small to contain windows'
+        });
+
+        zoneSplittingGroup.add(this._createColorRow(
+            settings,
+            'zone-too-small-color',
+            'Warning Color',
+            'Color for zones that are too small for windows'
+        ));
+
+        const minWidthRow = new Adw.ActionRow({
+            title: 'Minimum Zone Width',
+            subtitle: 'Zones narrower than this show warning color (px)'
+        });
+        const minWidthSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 50,
+                upper: 500,
+                step_increment: 10,
+                value: settings.get_int('zone-min-width')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        minWidthSpin.connect('value-changed', (widget) => {
+            settings.set_int('zone-min-width', widget.get_value());
+        });
+        minWidthRow.add_suffix(minWidthSpin);
+        minWidthRow.activatable_widget = minWidthSpin;
+        zoneSplittingGroup.add(minWidthRow);
+
+        const minHeightRow = new Adw.ActionRow({
+            title: 'Minimum Zone Height',
+            subtitle: 'Zones shorter than this show warning color (px)'
+        });
+        const minHeightSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 50,
+                upper: 500,
+                step_increment: 10,
+                value: settings.get_int('zone-min-height')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        minHeightSpin.connect('value-changed', (widget) => {
+            settings.set_int('zone-min-height', widget.get_value());
+        });
+        minHeightRow.add_suffix(minHeightSpin);
+        minHeightRow.activatable_widget = minHeightSpin;
+        zoneSplittingGroup.add(minHeightRow);
+
+        appearancePage.add(zoneSplittingGroup);
+
         // Snap Preview Appearance Group
         const snapPreviewAppearanceGroup = new Adw.PreferencesGroup({
             title: 'Snap Preview (Drag to Snap)',
@@ -260,6 +315,14 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         });
         snapOpacityRow.add_suffix(snapOpacityScale);
         snapPreviewAppearanceGroup.add(snapOpacityRow);
+
+        // Zone split preview color
+        snapPreviewAppearanceGroup.add(this._createColorRow(
+            settings,
+            'zone-split-preview-color',
+            'Zone Split Preview',
+            'Color shown when splitting a zone (drop on edges)'
+        ));
 
         appearancePage.add(snapPreviewAppearanceGroup);
 
@@ -604,22 +667,148 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         const disableKeyModel = new Gtk.StringList();
         disableKeyModel.append('Escape');
         disableKeyModel.append('Space');
-        disableKeyModel.append('Ctrl');
-        disableKeyModel.append('Alt');
-        disableKeyModel.append('Super');
         disableKeyRow.set_model(disableKeyModel);
 
         const currentDisableKey = settings.get_string('snap-disable-key');
-        const disableKeyMap = {'escape': 0, 'space': 1, 'ctrl': 2, 'alt': 3, 'super': 4};
+        const disableKeyMap = {'escape': 0, 'space': 1};
         disableKeyRow.set_selected(disableKeyMap[currentDisableKey] ?? 0);
 
         disableKeyRow.connect('notify::selected', (widget) => {
-            const keys = ['escape', 'space', 'ctrl', 'alt', 'super'];
+            const keys = ['escape', 'space'];
             settings.set_string('snap-disable-key', keys[widget.selected]);
         });
         snapPreviewGroup.add(disableKeyRow);
 
         behaviorPage.add(snapPreviewGroup);
+
+        // Shake to Dismiss Group
+        const shakeGroup = new Adw.PreferencesGroup({
+            title: 'Shake to Dismiss',
+            description: 'Shake mouse left-right to dismiss snap grid during drag'
+        });
+
+        // Enable shake to dismiss
+        const shakeEnabledRow = new Adw.ActionRow({
+            title: 'Enable Shake to Dismiss',
+            subtitle: 'Shake mouse rapidly to exit snap mode while dragging'
+        });
+        const shakeEnabledSwitch = new Gtk.Switch({
+            active: settings.get_boolean('shake-to-dismiss-enabled'),
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('shake-to-dismiss-enabled', shakeEnabledSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        shakeEnabledRow.add_suffix(shakeEnabledSwitch);
+        shakeEnabledRow.activatable_widget = shakeEnabledSwitch;
+        shakeGroup.add(shakeEnabledRow);
+
+        // Shake threshold
+        const shakeThresholdRow = new Adw.ActionRow({
+            title: 'Direction Changes',
+            subtitle: 'Number of left-right changes needed (lower = more sensitive)'
+        });
+        const shakeThresholdSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 2,
+                upper: 6,
+                step_increment: 1,
+                value: settings.get_int('shake-threshold')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        shakeThresholdSpin.connect('value-changed', (widget) => {
+            settings.set_int('shake-threshold', widget.get_value());
+        });
+        shakeThresholdRow.add_suffix(shakeThresholdSpin);
+        shakeGroup.add(shakeThresholdRow);
+
+        // Shake time window
+        const shakeTimeRow = new Adw.ActionRow({
+            title: 'Time Window (ms)',
+            subtitle: 'Milliseconds within which shakes must occur'
+        });
+        const shakeTimeSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 200,
+                upper: 1000,
+                step_increment: 50,
+                value: settings.get_int('shake-time-window')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        shakeTimeSpin.connect('value-changed', (widget) => {
+            settings.set_int('shake-time-window', widget.get_value());
+        });
+        shakeTimeRow.add_suffix(shakeTimeSpin);
+        shakeGroup.add(shakeTimeRow);
+
+        // Shake minimum movement
+        const shakeMovementRow = new Adw.ActionRow({
+            title: 'Minimum Movement (px)',
+            subtitle: 'Pixels of movement to count as a direction change'
+        });
+        const shakeMovementSpin = new Gtk.SpinButton({
+            adjustment: new Gtk.Adjustment({
+                lower: 10,
+                upper: 100,
+                step_increment: 5,
+                value: settings.get_int('shake-min-movement')
+            }),
+            valign: Gtk.Align.CENTER
+        });
+        shakeMovementSpin.connect('value-changed', (widget) => {
+            settings.set_int('shake-min-movement', widget.get_value());
+        });
+        shakeMovementRow.add_suffix(shakeMovementSpin);
+        shakeGroup.add(shakeMovementRow);
+
+        behaviorPage.add(shakeGroup);
+
+        // Zone Split Group
+        const zoneSplitGroup = new Adw.PreferencesGroup({
+            title: 'Zone Splitting',
+            description: 'Drop on zone edges to snap to half the zone'
+        });
+
+        // Enable zone splitting
+        const zoneSplitEnabledRow = new Adw.ActionRow({
+            title: 'Enable Zone Splitting',
+            subtitle: 'Drop near edges to snap to half-zones'
+        });
+        const zoneSplitEnabledSwitch = new Gtk.Switch({
+            active: settings.get_boolean('zone-split-enabled'),
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('zone-split-enabled', zoneSplitEnabledSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        zoneSplitEnabledRow.add_suffix(zoneSplitEnabledSwitch);
+        zoneSplitEnabledRow.activatable_widget = zoneSplitEnabledSwitch;
+        zoneSplitGroup.add(zoneSplitEnabledRow);
+
+        // Zone split threshold
+        const zoneSplitThresholdRow = new Adw.ActionRow({
+            title: 'Edge Threshold',
+            subtitle: 'How close to edge to trigger split (% of zone)'
+        });
+        const zoneSplitThresholdScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({
+                lower: 0.15,
+                upper: 0.45,
+                step_increment: 0.05,
+                page_increment: 0.1
+            }),
+            digits: 2,
+            draw_value: true,
+            hexpand: true,
+            valign: Gtk.Align.CENTER
+        });
+        zoneSplitThresholdScale.set_value(settings.get_double('zone-split-threshold'));
+        zoneSplitThresholdScale.connect('value-changed', (scale) => {
+            settings.set_double('zone-split-threshold', scale.get_value());
+        });
+        zoneSplitThresholdRow.add_suffix(zoneSplitThresholdScale);
+        zoneSplitGroup.add(zoneSplitThresholdRow);
+
+        behaviorPage.add(zoneSplitGroup);
 
         window.add(behaviorPage);
 
@@ -945,41 +1134,230 @@ export default class SnapKitPreferences extends ExtensionPreferences {
     }
 
     _createColorRow(settings, key, title, subtitle) {
-        const row = new Adw.ActionRow({
+        const expander = new Adw.ExpanderRow({
             title: title,
             subtitle: subtitle
         });
 
-        const colorButton = new Gtk.ColorButton({
-            valign: Gtk.Align.CENTER,
-            use_alpha: true
-        });
-
-        // Parse current color with validation
+        // Parse current color
         const colorString = settings.get_string(key);
         const rgba = new Gdk.RGBA();
-        
         if (!rgba.parse(colorString)) {
-            // If parsing fails, use a default color
-            log(`SnapKit Prefs: Invalid color string for ${key}: ${colorString}, using default`);
             rgba.parse('rgba(0, 0, 0, 0.5)');
         }
-        
-        colorButton.set_rgba(rgba);
 
-        // Connect to color changes
-        colorButton.connect('color-set', (widget) => {
-            try {
-                const color = widget.get_rgba();
-                const colorStr = `rgba(${Math.round(color.red * 255)}, ${Math.round(color.green * 255)}, ${Math.round(color.blue * 255)}, ${color.alpha.toFixed(2)})`;
-                settings.set_string(key, colorStr);
-            } catch (e) {
-                log(`SnapKit Prefs: Error setting color for ${key}: ${e.message}`);
+        // Convert RGBA to HSV
+        const rgbToHsv = (r, g, b) => {
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const d = max - min;
+            let h = 0;
+            const s = max === 0 ? 0 : d / max;
+            const v = max;
+
+            if (max !== min) {
+                switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                }
+                h /= 6;
+            }
+            return [h * 360, s * 100, v * 100];
+        };
+
+        // Convert HSV to RGBA
+        const hsvToRgb = (h, s, v) => {
+            h = h / 360;
+            s = s / 100;
+            v = v / 100;
+
+            let r, g, b;
+            const i = Math.floor(h * 6);
+            const f = h * 6 - i;
+            const p = v * (1 - s);
+            const q = v * (1 - f * s);
+            const t = v * (1 - (1 - f) * s);
+
+            switch (i % 6) {
+                case 0: r = v; g = t; b = p; break;
+                case 1: r = q; g = v; b = p; break;
+                case 2: r = p; g = v; b = t; break;
+                case 3: r = p; g = q; b = v; break;
+                case 4: r = t; g = p; b = v; break;
+                case 5: r = v; g = p; b = q; break;
+            }
+            return [r, g, b];
+        };
+
+        let [h, s, v] = rgbToHsv(rgba.red, rgba.green, rgba.blue);
+        let alpha = rgba.alpha;
+
+        // Color preview swatch
+        const previewArea = new Gtk.DrawingArea({
+            width_request: 32,
+            height_request: 32,
+            valign: Gtk.Align.CENTER
+        });
+
+        const updatePreview = () => {
+            const [r, g, b] = hsvToRgb(h, s, v);
+            previewArea.set_draw_func((area, cr, width, height) => {
+                // Draw checkerboard for transparency
+                const checkSize = 4;
+                for (let y = 0; y < height; y += checkSize) {
+                    for (let x = 0; x < width; x += checkSize) {
+                        const isLight = ((x / checkSize) + (y / checkSize)) % 2 === 0;
+                        cr.setSourceRGBA(isLight ? 0.8 : 0.6, isLight ? 0.8 : 0.6, isLight ? 0.8 : 0.6, 1);
+                        cr.rectangle(x, y, checkSize, checkSize);
+                        cr.fill();
+                    }
+                }
+                // Draw color with alpha
+                cr.setSourceRGBA(r, g, b, alpha);
+                cr.rectangle(0, 0, width, height);
+                cr.fill();
+                // Border
+                cr.setSourceRGBA(0.5, 0.5, 0.5, 1);
+                cr.setLineWidth(1);
+                cr.rectangle(0.5, 0.5, width - 1, height - 1);
+                cr.stroke();
+            });
+            previewArea.queue_draw();
+        };
+
+        const saveColor = () => {
+            const [r, g, b] = hsvToRgb(h, s, v);
+            const colorStr = `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha.toFixed(2)})`;
+            settings.set_string(key, colorStr);
+            updatePreview();
+        };
+
+        expander.add_suffix(previewArea);
+        updatePreview();
+
+        // Hue slider (0-360)
+        const hueRow = new Adw.ActionRow({ title: 'Hue' });
+        const hueScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({ lower: 0, upper: 360, step_increment: 1, value: h }),
+            digits: 0,
+            draw_value: true,
+            hexpand: true,
+            valign: Gtk.Align.CENTER
+        });
+        // Color gradient for hue
+        hueScale.add_css_class('hue-slider');
+        hueScale.connect('value-changed', (scale) => {
+            h = scale.get_value();
+            saveColor();
+        });
+        hueRow.add_suffix(hueScale);
+        expander.add_row(hueRow);
+
+        // Saturation slider (0-100)
+        const satRow = new Adw.ActionRow({ title: 'Saturation' });
+        const satScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({ lower: 0, upper: 100, step_increment: 1, value: s }),
+            digits: 0,
+            draw_value: true,
+            hexpand: true,
+            valign: Gtk.Align.CENTER
+        });
+        satScale.connect('value-changed', (scale) => {
+            s = scale.get_value();
+            saveColor();
+        });
+        satRow.add_suffix(satScale);
+        expander.add_row(satRow);
+
+        // Brightness/Value slider (0-100)
+        const valRow = new Adw.ActionRow({ title: 'Brightness' });
+        const valScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({ lower: 0, upper: 100, step_increment: 1, value: v }),
+            digits: 0,
+            draw_value: true,
+            hexpand: true,
+            valign: Gtk.Align.CENTER
+        });
+        valScale.connect('value-changed', (scale) => {
+            v = scale.get_value();
+            saveColor();
+        });
+        valRow.add_suffix(valScale);
+        expander.add_row(valRow);
+
+        // Alpha/Opacity slider (0-100)
+        const alphaRow = new Adw.ActionRow({ title: 'Opacity' });
+        const alphaScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({ lower: 0, upper: 100, step_increment: 1, value: alpha * 100 }),
+            digits: 0,
+            draw_value: true,
+            hexpand: true,
+            valign: Gtk.Align.CENTER
+        });
+        alphaScale.connect('value-changed', (scale) => {
+            alpha = scale.get_value() / 100;
+            saveColor();
+        });
+        alphaRow.add_suffix(alphaScale);
+        expander.add_row(alphaRow);
+
+        // Hex input row
+        const hexRow = new Adw.ActionRow({ title: 'Hex Color' });
+        const hexEntry = new Gtk.Entry({
+            valign: Gtk.Align.CENTER,
+            width_chars: 9,
+            max_length: 9,
+            placeholder_text: '#RRGGBBAA'
+        });
+
+        const updateHexEntry = () => {
+            const [r, g, b] = hsvToRgb(h, s, v);
+            const toHex = (n) => Math.round(n * 255).toString(16).padStart(2, '0');
+            hexEntry.set_text(`#${toHex(r)}${toHex(g)}${toHex(b)}${toHex(alpha)}`);
+        };
+        updateHexEntry();
+
+        hexEntry.connect('activate', (entry) => {
+            const hex = entry.get_text().trim();
+            const match = hex.match(/^#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})?$/);
+            if (match) {
+                const r = parseInt(match[1], 16) / 255;
+                const g = parseInt(match[2], 16) / 255;
+                const b = parseInt(match[3], 16) / 255;
+                const a = match[4] ? parseInt(match[4], 16) / 255 : alpha;
+
+                [h, s, v] = rgbToHsv(r, g, b);
+                alpha = a;
+
+                hueScale.set_value(h);
+                satScale.set_value(s);
+                valScale.set_value(v);
+                alphaScale.set_value(alpha * 100);
+                saveColor();
+                updateHexEntry();
             }
         });
 
-        row.add_suffix(colorButton);
-        return row;
+        // Update hex when sliders change
+        const origSave = saveColor;
+        const wrappedSaveColor = () => {
+            origSave();
+            updateHexEntry();
+        };
+        hueScale.connect('value-changed', updateHexEntry);
+        satScale.connect('value-changed', updateHexEntry);
+        valScale.connect('value-changed', updateHexEntry);
+        alphaScale.connect('value-changed', updateHexEntry);
+
+        hexRow.add_suffix(hexEntry);
+        expander.add_row(hexRow);
+
+        return expander;
     }
 
     /**

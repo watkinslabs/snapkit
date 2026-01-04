@@ -410,9 +410,22 @@ export class LayoutManager {
             return false;
         }
 
-        // Calculate axis length for the split
+        // For nested splits, we need to calculate the ACTUAL available space
+        // for this specific split, not the full workArea
         const isHorizontal = dividerInfo.direction === 'col';
-        const axisLength = isHorizontal ? workArea.width : workArea.height;
+
+        // Get the actual axis length by looking at the resolved zones
+        // that belong to this split
+        const axisLength = this._getActualSplitAxisLength(
+            layout,
+            dividerInfo.splitPath,
+            dividerInfo.dividerIndex,
+            isHorizontal,
+            workArea,
+            monitor
+        );
+
+        this._debug(`Actual axis length for split: ${axisLength} (workArea: ${isHorizontal ? workArea.width : workArea.height})`);
 
         // Calculate new sizes
         const newSizes = calculateDividerDrag(
@@ -442,6 +455,81 @@ export class LayoutManager {
 
         this._debug(`Updated override for ${layoutId} divider ${dividerInfo.dividerIndex}`);
         return true;
+    }
+
+    /**
+     * Calculate the actual axis length for a split at a given path
+     * For nested splits, this is less than the full workArea
+     *
+     * @param {object} layout
+     * @param {number[]} splitPath - Path to the split
+     * @param {number} dividerIndex - Which divider
+     * @param {boolean} isHorizontal - true for col split, false for row split
+     * @param {object} workArea
+     * @param {object} monitor
+     * @returns {number} - Actual available pixels for this split's axis
+     */
+    _getActualSplitAxisLength(layout, splitPath, dividerIndex, isHorizontal, workArea, monitor) {
+        // Resolve the current layout to get actual pixel positions
+        const rects = this.resolveLayoutRects(layout, workArea, monitor);
+
+        if (rects.size === 0) {
+            // Fallback to workArea
+            return isHorizontal ? workArea.width : workArea.height;
+        }
+
+        // Navigate to the split node
+        let node = layout.root;
+        for (const idx of splitPath) {
+            if (node.type === 'split' && node.children[idx]) {
+                node = node.children[idx];
+            }
+        }
+
+        if (node.type !== 'split') {
+            return isHorizontal ? workArea.width : workArea.height;
+        }
+
+        // Get the first and last child zones to determine the split's bounds
+        const firstChildLeaves = this._getLeafIds(node.children[0]);
+        const lastChildLeaves = this._getLeafIds(node.children[node.children.length - 1]);
+
+        if (firstChildLeaves.length === 0 || lastChildLeaves.length === 0) {
+            return isHorizontal ? workArea.width : workArea.height;
+        }
+
+        // Get actual rects
+        const firstRect = rects.get(firstChildLeaves[0]);
+        const lastRect = rects.get(lastChildLeaves[lastChildLeaves.length - 1]);
+
+        if (!firstRect || !lastRect) {
+            return isHorizontal ? workArea.width : workArea.height;
+        }
+
+        // Calculate total span
+        if (isHorizontal) {
+            return (lastRect.tileRect.x + lastRect.tileRect.width) - firstRect.tileRect.x;
+        } else {
+            return (lastRect.tileRect.y + lastRect.tileRect.height) - firstRect.tileRect.y;
+        }
+    }
+
+    /**
+     * Get all leaf IDs under a node
+     * @param {object} node
+     * @returns {string[]}
+     */
+    _getLeafIds(node) {
+        if (!node) return [];
+        if (node.type === 'leaf') return [node.id];
+        if (node.type === 'split' && node.children) {
+            const ids = [];
+            for (const child of node.children) {
+                ids.push(...this._getLeafIds(child));
+            }
+            return ids;
+        }
+        return [];
     }
 
     /**
@@ -551,6 +639,212 @@ export class LayoutManager {
     isPreset(layoutId) {
         // Check both id (simple format) and name (full-spec format)
         return PRESET_LAYOUTS.some(p => (p.id === layoutId) || (p.name === layoutId));
+    }
+
+    /**
+     * Create a new layout with a zone split into two
+     * Used for dynamic zone splitting during drag-to-snap
+     *
+     * @param {object} layout - Source layout
+     * @param {string} zoneId - Zone to split
+     * @param {string} splitDir - 'left', 'right', 'top', 'bottom' - which half the window goes in
+     * @returns {{layout: object, newZoneId: string, siblingZoneId: string}|null}
+     */
+    createSplitLayout(layout, zoneId, splitDir) {
+        const layoutId = this.getLayoutId(layout);
+        const isHorizontal = splitDir === 'left' || splitDir === 'right';
+        const direction = isHorizontal ? 'col' : 'row';
+
+        // Generate unique layout ID for this split variant
+        const splitLayoutId = `${layoutId}__split_${splitDir}_${zoneId}`;
+
+        // Check if we already have this split layout
+        if (this._layouts.has(splitLayoutId)) {
+            const existingLayout = this._layouts.get(splitLayoutId);
+            const newZoneId = splitDir === 'left' || splitDir === 'top'
+                ? `${zoneId}-1` : `${zoneId}-2`;
+            const siblingZoneId = splitDir === 'left' || splitDir === 'top'
+                ? `${zoneId}-2` : `${zoneId}-1`;
+            return { layout: existingLayout, newZoneId, siblingZoneId };
+        }
+
+        // Handle simple format layouts
+        if (!isFullSpecLayout(layout)) {
+            return this._createSplitSimpleLayout(layout, zoneId, splitDir, splitLayoutId);
+        }
+
+        // Handle full-spec format layouts
+        return this._createSplitFullSpecLayout(layout, zoneId, splitDir, splitLayoutId);
+    }
+
+    /**
+     * Create split version of a simple format layout
+     * @private
+     */
+    _createSplitSimpleLayout(layout, zoneId, splitDir, splitLayoutId) {
+        const isHorizontal = splitDir === 'left' || splitDir === 'right';
+
+        // Find the zone to split
+        const zoneIndex = layout.zones.findIndex(z => z.id === zoneId);
+        if (zoneIndex === -1) {
+            this._debug(`Zone ${zoneId} not found in layout`);
+            return null;
+        }
+
+        const zone = layout.zones[zoneIndex];
+
+        // Create two new zones from the split
+        let zone1, zone2;
+        if (isHorizontal) {
+            zone1 = {
+                id: `${zoneId}-1`,
+                x: zone.x,
+                y: zone.y,
+                width: zone.width / 2,
+                height: zone.height
+            };
+            zone2 = {
+                id: `${zoneId}-2`,
+                x: zone.x + zone.width / 2,
+                y: zone.y,
+                width: zone.width / 2,
+                height: zone.height
+            };
+        } else {
+            zone1 = {
+                id: `${zoneId}-1`,
+                x: zone.x,
+                y: zone.y,
+                width: zone.width,
+                height: zone.height / 2
+            };
+            zone2 = {
+                id: `${zoneId}-2`,
+                x: zone.x,
+                y: zone.y + zone.height / 2,
+                width: zone.width,
+                height: zone.height / 2
+            };
+        }
+
+        // Create new layout with split zones
+        const newZones = [...layout.zones];
+        newZones.splice(zoneIndex, 1, zone1, zone2);
+
+        const newLayout = {
+            id: splitLayoutId,
+            name: `${layout.name || layout.id} (split)`,
+            zones: newZones
+        };
+
+        // Register as temporary runtime layout
+        this._layouts.set(splitLayoutId, newLayout);
+        this._debug(`Created split simple layout: ${splitLayoutId}`);
+
+        const newZoneId = splitDir === 'left' || splitDir === 'top'
+            ? `${zoneId}-1` : `${zoneId}-2`;
+        const siblingZoneId = splitDir === 'left' || splitDir === 'top'
+            ? `${zoneId}-2` : `${zoneId}-1`;
+
+        return { layout: newLayout, newZoneId, siblingZoneId };
+    }
+
+    /**
+     * Create split version of a full-spec format layout
+     * @private
+     */
+    _createSplitFullSpecLayout(layout, zoneId, splitDir, splitLayoutId) {
+        const isHorizontal = splitDir === 'left' || splitDir === 'right';
+        const direction = isHorizontal ? 'col' : 'row';
+
+        // Deep clone the layout
+        const newLayout = JSON.parse(JSON.stringify(layout));
+        newLayout.name = splitLayoutId;
+
+        // Find and replace the target leaf node
+        const replaced = this._replaceLeafWithSplit(
+            newLayout.root,
+            zoneId,
+            direction,
+            `${zoneId}-1`,
+            `${zoneId}-2`
+        );
+
+        if (!replaced) {
+            this._debug(`Failed to split zone ${zoneId} in full-spec layout`);
+            return null;
+        }
+
+        // Validate the new layout
+        const result = validateLayout(newLayout);
+        if (!result.valid) {
+            this._debug(`Split layout validation failed: ${result.errors.join(', ')}`);
+            return null;
+        }
+
+        // Register as temporary runtime layout
+        this._layouts.set(splitLayoutId, newLayout);
+        this._debug(`Created split full-spec layout: ${splitLayoutId}`);
+
+        const newZoneId = splitDir === 'left' || splitDir === 'top'
+            ? `${zoneId}-1` : `${zoneId}-2`;
+        const siblingZoneId = splitDir === 'left' || splitDir === 'top'
+            ? `${zoneId}-2` : `${zoneId}-1`;
+
+        return { layout: newLayout, newZoneId, siblingZoneId };
+    }
+
+    /**
+     * Recursively find and replace a leaf node with a split
+     * @private
+     * @returns {boolean} - true if replaced
+     */
+    _replaceLeafWithSplit(node, targetId, direction, id1, id2) {
+        if (!node) return false;
+
+        if (node.type === 'leaf' && node.id === targetId) {
+            // Transform this leaf into a split
+            const originalSize = node.size;
+
+            // Replace properties
+            delete node.id;
+            node.type = 'split';
+            node.dir = direction;
+            node.children = [
+                { type: 'leaf', id: id1, size: { kind: 'frac', value: 1 } },
+                { type: 'leaf', id: id2, size: { kind: 'frac', value: 1 } }
+            ];
+
+            // Preserve original size if it existed
+            if (originalSize) {
+                node.size = originalSize;
+            }
+
+            return true;
+        }
+
+        if (node.type === 'split' && node.children) {
+            for (const child of node.children) {
+                if (this._replaceLeafWithSplit(child, targetId, direction, id1, id2)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Remove a runtime split layout
+     * @param {string} layoutId
+     */
+    removeSplitLayout(layoutId) {
+        // Only remove if it's a split layout (contains __split_)
+        if (layoutId.includes('__split_')) {
+            this._layouts.delete(layoutId);
+            this._overrideStore.clearLayoutOverrides(layoutId);
+            this._debug(`Removed split layout: ${layoutId}`);
+        }
     }
 
     destroy() {

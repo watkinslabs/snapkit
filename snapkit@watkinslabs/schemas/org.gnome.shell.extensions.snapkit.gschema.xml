@@ -57,6 +57,26 @@
       <description>RGBA color for zone highlight on hover</description>
     </key>
 
+    <key name="zone-too-small-color" type="s">
+      <default>'rgba(224, 27, 36, 0.6)'</default>
+      <summary>Zone too small color</summary>
+      <description>RGBA color for zones that are too small to contain windows</description>
+    </key>
+
+    <key name="zone-min-width" type="i">
+      <default>100</default>
+      <range min="50" max="500"/>
+      <summary>Minimum zone width</summary>
+      <description>Minimum width in pixels for a zone to be considered usable</description>
+    </key>
+
+    <key name="zone-min-height" type="i">
+      <default>100</default>
+      <range min="50" max="500"/>
+      <summary>Minimum zone height</summary>
+      <description>Minimum height in pixels for a zone to be considered usable</description>
+    </key>
+
     <key name="overlay-opacity" type="d">
       <default>0.95</default>
       <range min="0.0" max="1.0"/>
@@ -261,6 +281,54 @@
       <default>'escape'</default>
       <summary>Key to disable snap</summary>
       <description>Press this key while dragging to disable snap preview, or during SNAP MODE to exit</description>
+    </key>
+
+    <!-- Zone Split on Drop Settings -->
+    <key name="zone-split-enabled" type="b">
+      <default>true</default>
+      <summary>Enable zone splitting</summary>
+      <description>Allow dropping on edges of zones to snap to half the zone</description>
+    </key>
+
+    <key name="zone-split-threshold" type="d">
+      <default>0.3</default>
+      <range min="0.15" max="0.45"/>
+      <summary>Zone split edge threshold</summary>
+      <description>How far from zone edge to trigger split (0.15-0.45, as fraction of zone size)</description>
+    </key>
+
+    <key name="zone-split-preview-color" type="s">
+      <default>'rgba(100, 255, 150, 0.5)'</default>
+      <summary>Zone split preview color</summary>
+      <description>Color of the split preview indicator</description>
+    </key>
+
+    <!-- Shake to Dismiss Settings -->
+    <key name="shake-to-dismiss-enabled" type="b">
+      <default>true</default>
+      <summary>Enable shake to dismiss</summary>
+      <description>Shake mouse left-right quickly to dismiss snap preview during drag</description>
+    </key>
+
+    <key name="shake-threshold" type="i">
+      <default>3</default>
+      <range min="2" max="6"/>
+      <summary>Shake threshold</summary>
+      <description>Number of direction changes needed to trigger dismiss (2-6)</description>
+    </key>
+
+    <key name="shake-time-window" type="i">
+      <default>400</default>
+      <range min="200" max="1000"/>
+      <summary>Shake time window</summary>
+      <description>Milliseconds within which direction changes must occur (200-1000)</description>
+    </key>
+
+    <key name="shake-min-movement" type="i">
+      <default>30</default>
+      <range min="10" max="100"/>
+      <summary>Shake minimum movement</summary>
+      <description>Minimum pixels of movement to count as a shake direction (10-100)</description>
     </key>
 
     <key name="monitor-layouts" type="s">

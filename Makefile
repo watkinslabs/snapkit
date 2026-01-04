@@ -4,7 +4,11 @@ EXTENSION_UUID = snapkit@watkinslabs
 EXTENSION_DIR = $(EXTENSION_UUID)
 INSTALL_DIR = $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 BUILD_DIR = build
-ZIP_NAME = $(EXTENSION_UUID).shell-extension.zip
+METADATA = $(EXTENSION_DIR)/metadata.json
+
+# Get current version from metadata.json
+VERSION := $(shell grep -o '"version": *[0-9]*' $(METADATA) 2>/dev/null | grep -o '[0-9]*')
+ZIP_NAME = $(EXTENSION_UUID).v$(VERSION).shell-extension.zip
 
 # Extension files to install/package
 FILES = extension.js prefs.js metadata.json stylesheet.css
@@ -23,22 +27,31 @@ P_OK     := $(C_GREEN)[✓]$(C_NC)
 P_WARN   := $(C_YELLOW)[!]$(C_NC)
 P_ERR    := $(C_RED)[✗]$(C_NC)
 
-.PHONY: help install uninstall enable disable reload dev restart clean deploy build compile-schemas check-deps status
+.PHONY: help install uninstall enable disable reload dev restart clean deploy build compile-schemas check-deps status version bump release
 
 help:
 	@echo "SnapKit Extension - Available targets:"
-	@echo "  make install          - Install extension to user directory"
-	@echo "  make uninstall        - Remove extension from user directory"
-	@echo "  make enable           - Enable the extension"
-	@echo "  make disable          - Disable the extension"
-	@echo "  make reload           - Reinstall and reload extension (may need logout on Wayland)"
-	@echo "  make dev              - Test in nested GNOME Shell at 2560x1440 (or DEV_RESOLUTION=WxH)"
-	@echo "  make restart          - Restart GNOME Shell (X11 only)"
-	@echo "  make deploy           - Create distributable zip file"
-	@echo "  make clean            - Remove build artifacts"
-	@echo "  make compile-schemas  - Compile GSettings schemas"
-	@echo "  make check-deps       - Verify required tools are installed"
-	@echo "  make status           - Show extension status"
+	@echo ""
+	@echo "  Development:"
+	@echo "    make install        - Install extension to user directory"
+	@echo "    make uninstall      - Remove extension from user directory"
+	@echo "    make enable         - Enable the extension"
+	@echo "    make disable        - Disable the extension"
+	@echo "    make reload         - Reinstall and reload extension"
+	@echo "    make dev            - Test in nested GNOME Shell (DEV_RESOLUTION=WxH)"
+	@echo "    make restart        - Restart GNOME Shell (X11 only)"
+	@echo ""
+	@echo "  Release:"
+	@echo "    make version        - Show current version"
+	@echo "    make bump           - Bump version number (1 -> 2)"
+	@echo "    make build          - Create zip for extensions.gnome.org upload"
+	@echo "    make release        - Bump version and create release zip"
+	@echo ""
+	@echo "  Utilities:"
+	@echo "    make clean          - Remove build artifacts"
+	@echo "    make compile-schemas- Compile GSettings schemas"
+	@echo "    make check-deps     - Verify required tools are installed"
+	@echo "    make status         - Show extension status"
 
 check-deps:
 	@printf "$(P_INFO) Checking dependencies...\n"
@@ -155,19 +168,40 @@ restart:
 		printf "    Please log out and log back in to apply changes\n"; \
 	fi
 
+version:
+	@printf "$(P_INFO) SnapKit v$(VERSION)\n"
+	@printf "    GNOME Shell: 45, 46, 47, 48\n"
+	@printf "    Tested on: Fedora 42, RHEL 10\n"
+	@printf "    metadata.json: $(METADATA)\n"
+
+bump:
+	@printf "$(P_INFO) Bumping version from $(VERSION) to $$(($(VERSION) + 1))...\n"
+	@sed -i 's/"version": *$(VERSION)/"version": $$(($(VERSION) + 1))/' $(METADATA)
+	@NEW_VER=$$(grep -o '"version": *[0-9]*' $(METADATA) | grep -o '[0-9]*'); \
+	printf "$(P_OK) Version bumped to $$NEW_VER\n"
+
 build: check-deps compile-schemas
-	@printf "$(P_INFO) Building extension package...\n"
+	@printf "$(P_INFO) Building extension package v$(VERSION)...\n"
 	@mkdir -p $(BUILD_DIR) || { printf "$(P_ERR) Failed to create build directory\n"; exit 1; }
+	@# Create zip with files at root level (required for extensions.gnome.org)
 	@cd $(EXTENSION_DIR) && zip -r ../$(BUILD_DIR)/$(ZIP_NAME) $(FILES) $(DIRS) >/dev/null 2>&1 || { \
 		printf "$(P_ERR) Failed to create zip archive\n"; \
 		exit 1; \
 	}
 	@printf "$(P_OK) Package created: $(BUILD_DIR)/$(ZIP_NAME)\n"
+	@printf "    Size: $$(du -h $(BUILD_DIR)/$(ZIP_NAME) | cut -f1)\n"
+	@printf "    Upload to: https://extensions.gnome.org/upload/\n"
+
+release: bump build
+	@printf "$(P_OK) Release package ready!\n"
+	@NEW_VER=$$(grep -o '"version": *[0-9]*' $(METADATA) | grep -o '[0-9]*'); \
+	printf "    Version: $$NEW_VER\n"; \
+	printf "    Package: $(BUILD_DIR)/$(EXTENSION_UUID).v$$NEW_VER.shell-extension.zip\n"
 
 deploy: clean build
 	@printf "$(P_OK) Extension ready for deployment\n"
 	@echo "    Package: $(BUILD_DIR)/$(ZIP_NAME)"
-	@echo "    Upload to: https://extensions.gnome.org"
+	@echo "    Upload to: https://extensions.gnome.org/upload/"
 
 clean:
 	@printf "$(P_INFO) Cleaning build artifacts...\n"
