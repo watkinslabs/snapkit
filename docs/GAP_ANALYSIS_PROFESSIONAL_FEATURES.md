@@ -1,7 +1,7 @@
 # Professional Features Gap Analysis
 
 **Date**: January 5, 2026  
-**SnapKit Version**: 1.0  
+**SnapKit Extension Version**: 1 (Early Development)  
 **Analysis Scope**: Comparison with professional-grade window managers
 
 ---
@@ -484,8 +484,10 @@ SnapKit provides a solid foundation for Windows 11-style snap layouts on GNOME, 
    - Share configurations with team
 
 3. **CLI Configuration** (Proposed)
+   
+   Future CLI tool examples (not yet implemented):
+   
    ```bash
-   # Future CLI tool examples (not yet implemented):
    snapkit-cli config set trigger-edge top
    snapkit-cli config get enabled-layouts
    snapkit-cli layout list
