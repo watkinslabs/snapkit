@@ -483,8 +483,9 @@ SnapKit provides a solid foundation for Windows 11-style snap layouts on GNOME, 
    - Selective export (only layouts, only rules, etc.)
    - Share configurations with team
 
-3. **CLI Configuration**
+3. **CLI Configuration** (Proposed)
    ```bash
+   # Future CLI tool examples (not yet implemented):
    snapkit-cli config set trigger-edge top
    snapkit-cli config get enabled-layouts
    snapkit-cli layout list
@@ -1035,10 +1036,14 @@ SnapKit provides a solid foundation for Windows 11-style snap layouts on GNOME, 
 
 ## Implementation Roadmap
 
-### Phase 1: Foundation (1-2 months)
+### Completed Foundation
 - ✅ Core tiling system (DONE)
 - ✅ Layout editor (DONE)
 - ✅ Override persistence (DONE)
+- ✅ Basic preferences UI (DONE)
+- ✅ Multi-monitor support (DONE)
+
+### Phase 1: Critical Gaps (1-2 months)
 - ⏳ Keyboard shortcuts (CRITICAL)
 - ⏳ Testing infrastructure (CRITICAL)
 - ⏳ Error handling improvements (CRITICAL)
