@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <!-- Main SnapKit Extension Schema -->
-  <schema id="org.gnome.shell.extensions.snapkit" path="/org/gnome/shell/extensions/snapkit/">
+  <!-- Main Turtle Extension Schema -->
+  <schema id="org.gnome.shell.extensions.turtle" path="/org/gnome/shell/extensions/turtle/">
 
     <!-- Appearance Settings -->
     <key name="zone-bg-color" type="s">

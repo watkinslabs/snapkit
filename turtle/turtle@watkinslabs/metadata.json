@@ -1,7 +1,7 @@
 {
-  "name": "SnapKit",
+  "name": "Turtle",
   "description": "BTree Window Manager - Advanced window snapping and tiling with visual zone overlays",
-  "uuid": "snapkit@watkinslabs.com",
+  "uuid": "turtle@watkinslabs",
   "shell-version": [
     "45",
     "46",
@@ -10,5 +10,7 @@
   ],
   "version": 1,
   "url": "https://github.com/watkinslabs/snapkit",
-  "settings-schema": "org.gnome.shell.extensions.snapkit"
+  "settings-schema": "org.gnome.shell.extensions.turtle",
+  "author": "Chris Watkins",
+  "email": "chris@watkinslabs.com"
 }

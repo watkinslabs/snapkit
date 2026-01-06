@@ -1,5 +1,5 @@
 /**
- * SnapKit - BTree Window Manager Extension for GNOME Shell
+ * Turtle - BTree Window Manager Extension for GNOME Shell
  *
  * Main entry point for GNOME Shell extension.
  * Provides init(), enable(), and disable() functions as required by GNOME Shell.
@@ -18,7 +18,7 @@
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { ExtensionController } from './src/extensionController.js';
 
-export default class SnapKitExtension extends Extension {
+export default class TurtleExtension extends Extension {
     constructor(metadata) {
         super(metadata);
         this._controller = null;
@@ -30,22 +30,22 @@ export default class SnapKitExtension extends Extension {
      */
     enable() {
         try {
-            log('[SnapKit] Enabling extension');
+            log('[Turtle] Enabling extension');
 
             // Create and initialize controller
             this._controller = new ExtensionController();
             this._controller.enable();
 
-            log('[SnapKit] Extension enabled successfully');
+            log('[Turtle] Extension enabled successfully');
         } catch (error) {
-            logError(error, '[SnapKit] Failed to enable extension');
+            logError(error, '[Turtle] Failed to enable extension');
 
             // Clean up on error
             if (this._controller) {
                 try {
                     this._controller.destroy();
                 } catch (e) {
-                    logError(e, '[SnapKit] Failed to clean up after error');
+                    logError(e, '[Turtle] Failed to clean up after error');
                 }
                 this._controller = null;
             }
@@ -58,16 +58,16 @@ export default class SnapKitExtension extends Extension {
      */
     disable() {
         try {
-            log('[SnapKit] Disabling extension');
+            log('[Turtle] Disabling extension');
 
             if (this._controller) {
                 this._controller.destroy();
                 this._controller = null;
             }
 
-            log('[SnapKit] Extension disabled successfully');
+            log('[Turtle] Extension disabled successfully');
         } catch (error) {
-            logError(error, '[SnapKit] Error disabling extension');
+            logError(error, '[Turtle] Error disabling extension');
         }
     }
 }
