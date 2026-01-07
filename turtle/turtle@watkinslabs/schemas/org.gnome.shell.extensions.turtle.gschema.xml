@@ -102,40 +102,96 @@
       <description>Debounce delay for trigger zones in milliseconds</description>
     </key>
 
-    <key name="toggle-overlay" type="s">
-      <default>'&lt;Super&gt;space'</default>
+    <!-- Global Keybindings (registered with GNOME Shell) -->
+    <key name="toggle-overlay" type="as">
+      <default>['&lt;Super&gt;space']</default>
       <summary>Toggle overlay shortcut</summary>
-      <description>Keyboard shortcut to toggle the overlay</description>
+      <description>Global keyboard shortcut to toggle the layout overlay</description>
     </key>
 
+    <key name="snap-left" type="as">
+      <default>['&lt;Super&gt;Left']</default>
+      <summary>Snap window left</summary>
+      <description>Snap focused window to left half</description>
+    </key>
+
+    <key name="snap-right" type="as">
+      <default>['&lt;Super&gt;Right']</default>
+      <summary>Snap window right</summary>
+      <description>Snap focused window to right half</description>
+    </key>
+
+    <key name="snap-up" type="as">
+      <default>['&lt;Super&gt;Up']</default>
+      <summary>Snap window up</summary>
+      <description>Snap focused window to top half</description>
+    </key>
+
+    <key name="snap-down" type="as">
+      <default>['&lt;Super&gt;Down']</default>
+      <summary>Snap window down</summary>
+      <description>Snap focused window to bottom half</description>
+    </key>
+
+    <key name="snap-topleft" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Left']</default>
+      <summary>Snap window top-left</summary>
+      <description>Snap focused window to top-left quarter</description>
+    </key>
+
+    <key name="snap-topright" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Right']</default>
+      <summary>Snap window top-right</summary>
+      <description>Snap focused window to top-right quarter</description>
+    </key>
+
+    <key name="snap-bottomleft" type="as">
+      <default>['&lt;Super&gt;&lt;Shift&gt;Left']</default>
+      <summary>Snap window bottom-left</summary>
+      <description>Snap focused window to bottom-left quarter</description>
+    </key>
+
+    <key name="snap-bottomright" type="as">
+      <default>['&lt;Super&gt;&lt;Shift&gt;Right']</default>
+      <summary>Snap window bottom-right</summary>
+      <description>Snap focused window to bottom-right quarter</description>
+    </key>
+
+    <key name="cycle-layout" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;space']</default>
+      <summary>Cycle layout</summary>
+      <description>Cycle through available layouts on current monitor</description>
+    </key>
+
+    <!-- Overlay Navigation Keys (not global - work when overlay is open) -->
     <key name="navigate-up" type="s">
       <default>'Up'</default>
       <summary>Navigate up shortcut</summary>
-      <description>Keyboard shortcut to navigate up</description>
+      <description>Keyboard shortcut to navigate up in overlay</description>
     </key>
 
     <key name="navigate-down" type="s">
       <default>'Down'</default>
       <summary>Navigate down shortcut</summary>
-      <description>Keyboard shortcut to navigate down</description>
+      <description>Keyboard shortcut to navigate down in overlay</description>
     </key>
 
     <key name="navigate-left" type="s">
       <default>'Left'</default>
       <summary>Navigate left shortcut</summary>
-      <description>Keyboard shortcut to navigate left</description>
+      <description>Keyboard shortcut to navigate left in overlay</description>
     </key>
 
     <key name="navigate-right" type="s">
       <default>'Right'</default>
       <summary>Navigate right shortcut</summary>
-      <description>Keyboard shortcut to navigate right</description>
+      <description>Keyboard shortcut to navigate right in overlay</description>
     </key>
 
     <key name="select-zone" type="s">
       <default>'Return'</default>
       <summary>Select zone shortcut</summary>
-      <description>Keyboard shortcut to select a zone</description>
+      <description>Keyboard shortcut to select a zone in overlay</description>
     </key>
 
     <key name="cancel" type="s">

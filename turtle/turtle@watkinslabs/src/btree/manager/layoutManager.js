@@ -46,10 +46,24 @@ const BUILTIN_LAYOUTS = {
     'half-split': {
         id: 'half-split',
         name: 'Half Split',
-        description: 'Two equal vertical zones (50/50)',
+        description: 'Two equal vertical zones (left/right)',
         layout: {
             tree: {
                 direction: 'vertical',
+                ratio: 0.5,
+                left: { zone: 0 },
+                right: { zone: 1 }
+            }
+        },
+        builtin: true
+    },
+    'half-horizontal': {
+        id: 'half-horizontal',
+        name: 'Half Horizontal',
+        description: 'Two equal horizontal zones (top/bottom)',
+        layout: {
+            tree: {
+                direction: 'horizontal',
                 ratio: 0.5,
                 left: { zone: 0 },
                 right: { zone: 1 }

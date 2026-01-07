@@ -42,6 +42,7 @@ import { EventCoordinator } from './interaction/eventCoordinator.js';
 import { MouseHandler } from './interaction/mouseHandler.js';
 import { DragDetector } from './interaction/dragDetector.js';
 import { KeyboardHandler } from './interaction/keyboardHandler.js';
+import { KeybindingManager } from './interaction/keybindingManager.js';
 import { InteractionStateManager } from './interaction/interactionStateManager.js';
 
 import { WindowSelector } from './ui/windowSelector.js';
@@ -53,7 +54,11 @@ import { AppearancePreferences } from './preferences/appearancePreferences.js';
 import { BehaviorPreferences } from './preferences/behaviorPreferences.js';
 import { LayoutPreferences } from './preferences/layoutPreferences.js';
 
+import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+// Extension settings schema ID
+const SCHEMA_ID = 'org.gnome.shell.extensions.turtle';
 
 export class ExtensionController {
     constructor() {
@@ -63,6 +68,8 @@ export class ExtensionController {
         this._serviceContainer = null;
         this._componentManager = null;
         this._eventBus = null;
+        this._settings = null;
+        this._keybindingManager = null;
 
         // State
         this._enabled = false;
@@ -81,6 +88,9 @@ export class ExtensionController {
         try {
             this._logger.info('Initializing SnapKit extension');
 
+            // Create GSettings
+            this._initializeSettings();
+
             // Create core systems
             this._serviceContainer = new ServiceContainer();
             this._componentManager = new ComponentManager();
@@ -91,6 +101,9 @@ export class ExtensionController {
 
             // Initialize components
             this._initializeComponents();
+
+            // Initialize global keybindings (requires EventBus and Settings)
+            this._initializeKeybindings();
 
             // Wire event handlers
             this._wireEventHandlers();
@@ -104,6 +117,61 @@ export class ExtensionController {
             this._logger.error('Failed to initialize extension', { error });
             this.destroy();
             throw error;
+        }
+    }
+
+    /**
+     * Initialize GSettings
+     * @private
+     */
+    _initializeSettings() {
+        try {
+            // Get the schema source from the extension's schemas directory
+            const schemaDir = Gio.File.new_for_path(
+                import.meta.url.replace('file://', '').replace('/src/extensionController.js', '/schemas')
+            );
+
+            let schemaSource;
+            if (schemaDir.query_exists(null)) {
+                schemaSource = Gio.SettingsSchemaSource.new_from_directory(
+                    schemaDir.get_path(),
+                    Gio.SettingsSchemaSource.get_default(),
+                    false
+                );
+            } else {
+                schemaSource = Gio.SettingsSchemaSource.get_default();
+            }
+
+            const schema = schemaSource.lookup(SCHEMA_ID, true);
+            if (!schema) {
+                throw new Error(`Schema ${SCHEMA_ID} not found`);
+            }
+
+            this._settings = new Gio.Settings({ settings_schema: schema });
+            this._logger.debug('GSettings initialized');
+        } catch (error) {
+            this._logger.error('Failed to initialize GSettings', { error });
+            // Continue without settings - keybindings won't work but extension can still function
+            this._settings = null;
+        }
+    }
+
+    /**
+     * Initialize global keybindings
+     * @private
+     */
+    _initializeKeybindings() {
+        if (!this._settings) {
+            this._logger.warn('No settings available, skipping keybindings');
+            return;
+        }
+
+        try {
+            this._keybindingManager = new KeybindingManager(this._eventBus, this._settings);
+            this._keybindingManager.initialize();
+            this._logger.debug('Keybindings initialized');
+        } catch (error) {
+            this._logger.error('Failed to initialize keybindings', { error });
         }
     }
 
@@ -437,6 +505,19 @@ export class ExtensionController {
         this._eventSubscriptions.push(
             this._eventBus.on('zone-snapped', (data) => {
                 this._handleZoneSnapped(data);
+            })
+        );
+
+        // Global keybinding events
+        this._eventSubscriptions.push(
+            this._eventBus.on('keyboard-snap-window', (data) => {
+                this._handleKeyboardSnapWindow(data);
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('keyboard-cycle-layout', () => {
+                this._handleKeyboardCycleLayout();
             })
         );
 
@@ -803,6 +884,119 @@ export class ExtensionController {
     }
 
     /**
+     * Handle keyboard snap window (global keybinding)
+     * @private
+     * @param {Object} data - {window, layoutId, zoneIndex}
+     */
+    _handleKeyboardSnapWindow(data) {
+        const { window, layoutId, zoneIndex } = data;
+
+        if (!window) {
+            this._logger.debug('No window for keyboard snap');
+            return;
+        }
+
+        const layoutManager = this._serviceContainer.get('layoutManager');
+        const snapHandler = this._serviceContainer.get('snapHandler');
+        const monitorManager = this._serviceContainer.get('monitorManager');
+        const layoutState = this._serviceContainer.get('layoutState');
+        const overrideStore = this._serviceContainer.get('overrideStore');
+
+        // Get the layout
+        const layout = layoutManager.getLayout(layoutId);
+        if (!layout) {
+            this._logger.error('Layout not found for keyboard snap', { layoutId });
+            return;
+        }
+
+        // Get monitor for the window
+        const rect = window.get_frame_rect();
+        const centerX = rect.x + rect.width / 2;
+        const centerY = rect.y + rect.height / 2;
+        const monitorIndex = monitorManager.getMonitorAtPoint(centerX, centerY);
+
+        // Get divider overrides
+        const overrides = overrideStore.getOverrides(layoutId, monitorIndex);
+
+        // Snap the window
+        snapHandler.snapToZone(window, monitorIndex, layoutId, zoneIndex, layout, { overrides });
+
+        // Update layout state
+        layoutState.setLayoutForMonitor(monitorIndex, layoutId);
+
+        this._logger.info('Window snapped via keyboard', {
+            layoutId,
+            zoneIndex,
+            monitorIndex,
+            windowTitle: window.get_title()
+        });
+    }
+
+    /**
+     * Handle keyboard cycle layout (global keybinding)
+     * @private
+     */
+    _handleKeyboardCycleLayout() {
+        const layoutManager = this._serviceContainer.get('layoutManager');
+        const layoutState = this._serviceContainer.get('layoutState');
+        const monitorManager = this._serviceContainer.get('monitorManager');
+        const snapHandler = this._serviceContainer.get('snapHandler');
+        const overrideStore = this._serviceContainer.get('overrideStore');
+
+        // Get focused window to determine monitor
+        const focusedWindow = global.display.focus_window;
+        let monitorIndex = 0;
+
+        if (focusedWindow) {
+            const rect = focusedWindow.get_frame_rect();
+            const centerX = rect.x + rect.width / 2;
+            const centerY = rect.y + rect.height / 2;
+            monitorIndex = monitorManager.getMonitorAtPoint(centerX, centerY);
+        } else {
+            monitorIndex = monitorManager.getPrimaryMonitor();
+        }
+
+        // Get all layouts - getAllLayouts returns an array of layout objects
+        const allLayouts = layoutManager.getAllLayouts();
+        const layoutIds = allLayouts.map(l => l.id);
+
+        if (layoutIds.length === 0) {
+            this._logger.warn('No layouts available to cycle');
+            return;
+        }
+
+        // Get current layout for monitor
+        const currentLayoutId = layoutState.getLayoutForMonitor(monitorIndex) || layoutIds[0];
+
+        // Find next layout
+        const currentIndex = layoutIds.indexOf(currentLayoutId);
+        const nextIndex = (currentIndex + 1) % layoutIds.length;
+        const nextLayoutId = layoutIds[nextIndex];
+
+        // Get the next layout
+        const nextLayout = layoutManager.getLayout(nextLayoutId);
+        if (!nextLayout) {
+            this._logger.error('Next layout not found', { nextLayoutId });
+            return;
+        }
+
+        // Update layout state
+        layoutState.setLayoutForMonitor(monitorIndex, nextLayoutId);
+
+        // Get overrides for new layout
+        const overrides = overrideStore.getOverrides(nextLayoutId, monitorIndex);
+
+        // Re-snap windows using snapHandler
+        snapHandler.resnapLayout(monitorIndex, nextLayoutId, nextLayout, { overrides });
+
+        this._logger.info('Layout cycled via keyboard', {
+            fromLayout: currentLayoutId,
+            toLayout: nextLayoutId,
+            monitorIndex
+        });
+    }
+
+    /**
      * Handle appearance settings changed
      * @private
      * @param {Object} data
@@ -948,6 +1142,12 @@ export class ExtensionController {
     destroy() {
         this.disable();
 
+        // Destroy keybinding manager first (unregisters keybindings)
+        if (this._keybindingManager) {
+            this._keybindingManager.destroy();
+            this._keybindingManager = null;
+        }
+
         // Destroy all components (in reverse order)
         if (this._componentManager) {
             this._componentManager.destroy();
@@ -958,6 +1158,9 @@ export class ExtensionController {
         if (this._serviceContainer) {
             this._serviceContainer = null;
         }
+
+        // Clear settings
+        this._settings = null;
 
         this._logger.info('Extension destroyed');
     }
