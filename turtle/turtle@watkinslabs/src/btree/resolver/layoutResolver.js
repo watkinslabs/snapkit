@@ -59,6 +59,10 @@ export class LayoutResolver {
      * @returns {ZoneRect[]} Array of zone rectangles
      */
     resolve(layout, workArea, options = {}) {
+        // Extract layout array if full layout object was passed
+        // (e.g., {id: 'grid-2x2', layout: [2, 2], ...} -> [2, 2])
+        const layoutData = layout?.layout ?? layout;
+
         // Default options
         const opts = {
             margin: options.margin ?? 0,
@@ -79,13 +83,13 @@ export class LayoutResolver {
         this._cacheMisses++;
 
         // Validate layout
-        const validation = this._validator.validate(layout);
+        const validation = this._validator.validate(layoutData);
         if (!validation.isValid()) {
             throw new Error(`Invalid layout: ${validation.getErrorMessage()}`);
         }
 
         // Build or get layout tree
-        const tree = this._getLayoutTree(layout);
+        const tree = this._getLayoutTree(layoutData);
 
         // Apply overrides to tree
         this._applyOverrides(tree, opts.overrides);
@@ -265,13 +269,18 @@ export class LayoutResolver {
      * @returns {string}
      */
     _getLayoutKey(layout) {
-        if (this._validator.isSimpleLayout(layout)) {
-            return `simple:${layout[0]}x${layout[1]}`;
+        // Handle full layout object with nested layout property
+        // e.g., {id: 'quarters', layout: {tree: {...}}, ...} -> extract {tree: {...}}
+        const layoutData = layout?.layout ?? layout;
+
+        if (this._validator.isSimpleLayout(layoutData)) {
+            return `simple:${layoutData[0]}x${layoutData[1]}`;
         }
 
         // For full-spec, use JSON (could be optimized)
         try {
-            return `full:${JSON.stringify(layout.tree)}`;
+            // layoutData.tree contains the actual tree definition
+            return `full:${JSON.stringify(layoutData.tree)}`;
         } catch (e) {
             return `full:${Date.now()}`;
         }

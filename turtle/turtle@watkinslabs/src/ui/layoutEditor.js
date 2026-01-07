@@ -12,6 +12,11 @@
  * Integrates with LayoutTree for manipulation.
  */
 
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 import { LayoutTree } from '../btree/tree/layoutTree.js';
 
@@ -97,7 +102,7 @@ export class LayoutEditor {
         this._container.add_child(footer);
 
         // Add to parent
-        parent.add_actor(this._container);
+        parent.add_child(this._container);
 
         this._logger.info('LayoutEditor initialized');
     }
@@ -409,7 +414,7 @@ export class LayoutEditor {
             // Render zones
             for (const zone of zones) {
                 const zoneActor = this._createZoneActor(zone);
-                this._previewContainer.add_actor(zoneActor);
+                this._previewContainer.add_child(zoneActor);
                 this._zoneActors.push({ actor: zoneActor, zone });
             }
         } catch (error) {

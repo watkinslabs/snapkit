@@ -10,6 +10,11 @@
  * All overlay classes extend this.
  */
 
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 
 export class BaseOverlay {
@@ -55,7 +60,7 @@ export class BaseOverlay {
         });
 
         if (this._parent) {
-            this._parent.add_actor(this._container);
+            this._parent.add_child(this._container);
         }
     }
 

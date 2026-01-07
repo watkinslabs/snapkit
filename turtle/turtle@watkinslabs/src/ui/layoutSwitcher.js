@@ -11,6 +11,11 @@
  * Similar to Alt+Tab behavior but for layouts.
  */
 
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 
 export class LayoutSwitcher {
@@ -99,7 +104,7 @@ export class LayoutSwitcher {
         this._container.add_child(footer);
 
         // Add to parent
-        parent.add_actor(this._container);
+        parent.add_child(this._container);
 
         this._logger.info('LayoutSwitcher initialized');
     }
@@ -346,7 +351,7 @@ export class LayoutSwitcher {
                     width: zone.width,
                     height: zone.height
                 });
-                thumbnail.add_actor(zoneRect);
+                thumbnail.add_child(zoneRect);
             }
         } catch (error) {
             this._logger.error('Failed to create thumbnail', { error });

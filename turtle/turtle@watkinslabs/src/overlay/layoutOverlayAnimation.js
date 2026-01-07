@@ -8,6 +8,9 @@
  * - Slide transitions
  */
 
+import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
+
 import { Logger } from '../core/logger.js';
 
 export class LayoutOverlayAnimation {

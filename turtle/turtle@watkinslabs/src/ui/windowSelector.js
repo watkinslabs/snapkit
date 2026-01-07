@@ -10,6 +10,12 @@
  * Used in SELECT_WINDOW state for interactive select workflow.
  */
 
+import St from 'gi://St';
+import Meta from 'gi://Meta';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 
 export class WindowSelector {
@@ -93,7 +99,7 @@ export class WindowSelector {
             style: 'spacing: 8px;'
         });
 
-        this._scrollView.add_actor(this._windowList);
+        this._scrollView.add_child(this._windowList);
         this._container.add_child(this._scrollView);
 
         // Create footer with instructions
@@ -108,7 +114,7 @@ export class WindowSelector {
         this._container.add_child(footer);
 
         // Add to parent
-        parent.add_actor(this._container);
+        parent.add_child(this._container);
 
         this._logger.info('WindowSelector initialized');
     }

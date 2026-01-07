@@ -13,55 +13,219 @@ import { Logger } from '../../core/logger.js';
 
 /**
  * Built-in layouts
+ *
+ * BTree layout format:
+ * - Simple grid: [rows, cols]
+ * - BTree split: { split: 'horizontal'|'vertical', ratio: 0.0-1.0, children: [...] }
  */
 const BUILTIN_LAYOUTS = {
+    // Simple grids
     'grid-1x1': {
         id: 'grid-1x1',
-        name: '1x1 (Full)',
+        name: 'Full',
         description: 'Single zone, full screen',
         layout: [1, 1],
         builtin: true
     },
-    'grid-2x1': {
-        id: 'grid-2x1',
-        name: '2x1 (Two Columns)',
-        description: 'Two vertical zones',
-        layout: [1, 2],
-        builtin: true
-    },
-    'grid-1x2': {
-        id: 'grid-1x2',
-        name: '1x2 (Two Rows)',
-        description: 'Two horizontal zones',
-        layout: [2, 1],
-        builtin: true
-    },
     'grid-2x2': {
         id: 'grid-2x2',
-        name: '2x2 (Four Quarters)',
+        name: '2x2 Grid',
         description: 'Four equal zones in 2x2 grid',
         layout: [2, 2],
         builtin: true
     },
-    'grid-3x1': {
-        id: 'grid-3x1',
-        name: '3x1 (Three Columns)',
-        description: 'Three vertical zones',
+    'grid-3x3': {
+        id: 'grid-3x3',
+        name: '3x3 Grid',
+        description: 'Nine zones in 3x3 grid',
+        layout: [3, 3],
+        builtin: true
+    },
+
+    // Windows 11 style layouts (BTree format: {tree: {direction, ratio, left, right}})
+    'half-split': {
+        id: 'half-split',
+        name: 'Half Split',
+        description: 'Two equal vertical zones (50/50)',
+        layout: {
+            tree: {
+                direction: 'vertical',
+                ratio: 0.5,
+                left: { zone: 0 },
+                right: { zone: 1 }
+            }
+        },
+        builtin: true
+    },
+    'quarters': {
+        id: 'quarters',
+        name: 'Quarters',
+        description: 'Four equal zones',
+        layout: {
+            tree: {
+                direction: 'vertical',
+                ratio: 0.5,
+                left: {
+                    direction: 'horizontal',
+                    ratio: 0.5,
+                    left: { zone: 0 },
+                    right: { zone: 1 }
+                },
+                right: {
+                    direction: 'horizontal',
+                    ratio: 0.5,
+                    left: { zone: 2 },
+                    right: { zone: 3 }
+                }
+            }
+        },
+        builtin: true
+    },
+    'thirds-vertical': {
+        id: 'thirds-vertical',
+        name: 'Thirds Vertical',
+        description: 'Three equal vertical zones',
+        layout: {
+            tree: {
+                direction: 'vertical',
+                ratio: 0.333,
+                left: { zone: 0 },
+                right: {
+                    direction: 'vertical',
+                    ratio: 0.5,
+                    left: { zone: 1 },
+                    right: { zone: 2 }
+                }
+            }
+        },
+        builtin: true
+    },
+    'thirds-horizontal': {
+        id: 'thirds-horizontal',
+        name: 'Thirds Horizontal',
+        description: 'Three equal horizontal zones',
+        layout: {
+            tree: {
+                direction: 'horizontal',
+                ratio: 0.333,
+                left: { zone: 0 },
+                right: {
+                    direction: 'horizontal',
+                    ratio: 0.5,
+                    left: { zone: 1 },
+                    right: { zone: 2 }
+                }
+            }
+        },
+        builtin: true
+    },
+    'left-focus': {
+        id: 'left-focus',
+        name: 'Left Focus',
+        description: 'Large left zone with two stacked right zones',
+        layout: {
+            tree: {
+                direction: 'vertical',
+                ratio: 0.6,
+                left: { zone: 0 },
+                right: {
+                    direction: 'horizontal',
+                    ratio: 0.5,
+                    left: { zone: 1 },
+                    right: { zone: 2 }
+                }
+            }
+        },
+        builtin: true
+    },
+    'right-focus': {
+        id: 'right-focus',
+        name: 'Right Focus',
+        description: 'Two stacked left zones with large right zone',
+        layout: {
+            tree: {
+                direction: 'vertical',
+                ratio: 0.4,
+                left: {
+                    direction: 'horizontal',
+                    ratio: 0.5,
+                    left: { zone: 0 },
+                    right: { zone: 1 }
+                },
+                right: { zone: 2 }
+            }
+        },
+        builtin: true
+    },
+    'top-focus': {
+        id: 'top-focus',
+        name: 'Top Focus',
+        description: 'Large top zone with two side-by-side bottom zones',
+        layout: {
+            tree: {
+                direction: 'horizontal',
+                ratio: 0.6,
+                left: { zone: 0 },
+                right: {
+                    direction: 'vertical',
+                    ratio: 0.5,
+                    left: { zone: 1 },
+                    right: { zone: 2 }
+                }
+            }
+        },
+        builtin: true
+    },
+    'bottom-focus': {
+        id: 'bottom-focus',
+        name: 'Bottom Focus',
+        description: 'Two side-by-side top zones with large bottom zone',
+        layout: {
+            tree: {
+                direction: 'horizontal',
+                ratio: 0.4,
+                left: {
+                    direction: 'vertical',
+                    ratio: 0.5,
+                    left: { zone: 0 },
+                    right: { zone: 1 }
+                },
+                right: { zone: 2 }
+            }
+        },
+        builtin: true
+    },
+    'center-focus': {
+        id: 'center-focus',
+        name: 'Center Focus',
+        description: 'Large center zone with side panels',
+        layout: {
+            tree: {
+                direction: 'vertical',
+                ratio: 0.25,
+                left: { zone: 0 },
+                right: {
+                    direction: 'vertical',
+                    ratio: 0.667,
+                    left: { zone: 1 },
+                    right: { zone: 2 }
+                }
+            }
+        },
+        builtin: true
+    },
+    'triple-columns': {
+        id: 'triple-columns',
+        name: 'Triple Columns',
+        description: 'Three equal width columns',
         layout: [1, 3],
         builtin: true
     },
-    'grid-1x3': {
-        id: 'grid-1x3',
-        name: '1x3 (Three Rows)',
-        description: 'Three horizontal zones',
+    'triple-rows': {
+        id: 'triple-rows',
+        name: 'Triple Rows',
+        description: 'Three equal height rows',
         layout: [3, 1],
-        builtin: true
-    },
-    'grid-3x3': {
-        id: 'grid-3x3',
-        name: '3x3 (Nine Zones)',
-        description: 'Nine zones in 3x3 grid',
-        layout: [3, 3],
         builtin: true
     }
 };

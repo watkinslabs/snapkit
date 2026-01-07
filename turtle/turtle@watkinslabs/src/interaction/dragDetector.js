@@ -12,6 +12,9 @@
  * Integrates with DragState to track active drags.
  */
 
+import Meta from 'gi://Meta';
+import GLib from 'gi://GLib';
+
 import { Logger } from '../core/logger.js';
 import { State } from '../state/extensionState.js';
 
@@ -147,9 +150,9 @@ export class DragDetector {
                 return;
             }
 
-            // Get final position
-            const rect = window.get_frame_rect();
-            const position = { x: rect.x, y: rect.y };
+            // Get pointer position (where user released) for zone detection
+            const [pointerX, pointerY] = global.get_pointer();
+            const position = { x: pointerX, y: pointerY };
 
             const dragDuration = Date.now() - this._dragStartTime;
 
@@ -184,62 +187,68 @@ export class DragDetector {
     }
 
     /**
-     * Connect window signals for position tracking
+     * Start tracking pointer position during drag
      * @private
      * @param {Meta.Window} window
      */
     _connectWindowSignals(window) {
-        if (!window) {
+        if (!window || this._pointerTrackerId) {
             return;
         }
 
-        // Connect position-changed signal
-        const posChangedId = window.connect('position-changed', () => {
-            this._onWindowPositionChanged(window);
+        // Use pointer polling since position-changed doesn't exist on Meta.Window
+        this._lastPointerPos = null;
+        this._pointerTrackerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
+            if (!this._isDragging) {
+                this._pointerTrackerId = null;
+                return GLib.SOURCE_REMOVE;
+            }
+
+            try {
+                const [x, y] = global.get_pointer();
+                const pos = { x, y };
+
+                // Only emit if position changed
+                if (!this._lastPointerPos ||
+                    this._lastPointerPos.x !== x ||
+                    this._lastPointerPos.y !== y) {
+                    this._lastPointerPos = pos;
+                    this._onWindowPositionChanged(window, pos);
+                }
+            } catch (e) {
+                // Ignore errors during tracking
+            }
+
+            return GLib.SOURCE_CONTINUE;
         });
-        this._signalIds.push({ object: window, id: posChangedId });
     }
 
     /**
-     * Disconnect window signals
+     * Stop tracking pointer position
      * @private
      * @param {Meta.Window} window
      */
     _disconnectWindowSignals(window) {
-        if (!window) {
-            return;
+        if (this._pointerTrackerId) {
+            GLib.source_remove(this._pointerTrackerId);
+            this._pointerTrackerId = null;
         }
-
-        // Find and disconnect window signals
-        this._signalIds = this._signalIds.filter(({ object, id }) => {
-            if (object === window) {
-                try {
-                    object.disconnect(id);
-                } catch (e) {
-                    // Window may be destroyed
-                }
-                return false;
-            }
-            return true;
-        });
+        this._lastPointerPos = null;
     }
 
     /**
      * Handle window position change during drag
      * @private
      * @param {Meta.Window} window
+     * @param {Object} position - Pointer position {x, y}
      */
-    _onWindowPositionChanged(window) {
+    _onWindowPositionChanged(window, position) {
         if (!this._isDragging || window !== this._draggedWindow) {
             return;
         }
 
         try {
-            // Get current position
-            const rect = window.get_frame_rect();
-            const position = { x: rect.x, y: rect.y };
-
-            // Update drag state
+            // Update drag state with pointer position
             this._dragState.updatePosition(position);
 
             // Emit event

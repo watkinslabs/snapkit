@@ -5,6 +5,11 @@
  * Simpler than LayoutOverlay - just shows a highlight around specific zones.
  */
 
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { BaseOverlay } from './baseOverlay.js';
 import { Logger } from '../core/logger.js';
 
@@ -119,7 +124,7 @@ export class ZonePositioningOverlay extends BaseOverlay {
                 opacity: s.animate ? 0 : 255
             });
 
-            this._container.add_actor(highlightActor);
+            this._container.add_child(highlightActor);
             this._highlightActors.set(zoneIndex, highlightActor);
 
             // Animate in if requested
@@ -245,7 +250,7 @@ export class ZonePositioningOverlay extends BaseOverlay {
             reactive: false
         });
 
-        this._container.add_actor(flashActor);
+        this._container.add_child(flashActor);
 
         // Fade out and destroy
         flashActor.ease({

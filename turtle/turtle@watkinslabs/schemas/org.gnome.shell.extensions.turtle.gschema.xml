@@ -63,6 +63,12 @@
     </key>
 
     <!-- Behavior Settings -->
+    <key name="trigger-edge" type="s">
+      <default>'top'</default>
+      <summary>Trigger edge</summary>
+      <description>Which screen edge triggers the overlay (top, bottom, left, right)</description>
+    </key>
+
     <key name="edge-size" type="i">
       <default>2</default>
       <range min="1" max="10"/>

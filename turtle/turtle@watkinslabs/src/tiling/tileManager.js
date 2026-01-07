@@ -12,6 +12,8 @@
  * - Save overrides to OverrideStore
  */
 
+import Meta from 'gi://Meta';
+
 import { Logger } from '../core/logger.js';
 
 /**

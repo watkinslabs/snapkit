@@ -10,6 +10,8 @@
  * Pure rendering - no interaction logic
  */
 
+import St from 'gi://St';
+
 import { Logger } from '../core/logger.js';
 
 export class LayoutOverlayRenderer {
@@ -70,7 +72,7 @@ export class LayoutOverlayRenderer {
             reactive: true // Enable hover/click
         });
 
-        container.add_actor(zoneActor);
+        container.add_child(zoneActor);
         this._zoneActors.push({ actor: zoneActor, zone });
 
         // Zone label (number)
@@ -94,7 +96,7 @@ export class LayoutOverlayRenderer {
                 zone.y + (zone.height - labelHeight) / 2
             );
 
-            container.add_actor(label);
+            container.add_child(label);
             this._labelActors.push(label);
         }
     }

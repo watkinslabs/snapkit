@@ -10,6 +10,10 @@
  * Integrates with: GNOME Shell Main.layoutManager
  */
 
+import Meta from 'gi://Meta';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 
 export class MonitorManager {
@@ -34,8 +38,8 @@ export class MonitorManager {
         this._layoutManager = layoutManager;
         this._updateMonitors();
 
-        // Listen for monitor changes
-        this._monitorsChangedId = global.display.connect('monitors-changed', () => {
+        // Listen for monitor changes (signal is on layoutManager in GNOME 45+)
+        this._monitorsChangedId = this._layoutManager.connect('monitors-changed', () => {
             this._onMonitorsChanged();
         });
 
@@ -49,8 +53,8 @@ export class MonitorManager {
      * Cleanup
      */
     destroy() {
-        if (this._monitorsChangedId) {
-            global.display.disconnect(this._monitorsChangedId);
+        if (this._monitorsChangedId && this._layoutManager) {
+            this._layoutManager.disconnect(this._monitorsChangedId);
             this._monitorsChangedId = null;
         }
 
@@ -103,7 +107,7 @@ export class MonitorManager {
      * @returns {Object} {x, y, width, height}
      */
     _getWorkArea(monitorIndex) {
-        const workArea = Main.layoutManager.getWorkAreaForMonitor(monitorIndex);
+        const workArea = this._layoutManager.getWorkAreaForMonitor(monitorIndex);
         return {
             x: workArea.x,
             y: workArea.y,
@@ -174,12 +178,23 @@ export class MonitorManager {
 
     /**
      * Get work area for a monitor
+     * Always fetches fresh from GNOME to account for dynamic docks/panels
      * @param {number} monitorIndex
      * @returns {Object|null} {x, y, width, height}
      */
     getWorkArea(monitorIndex) {
-        const monitor = this.getMonitor(monitorIndex);
-        return monitor ? { ...monitor.workArea } : null;
+        if (!this.hasMonitor(monitorIndex)) {
+            return null;
+        }
+
+        // Always get fresh work area to account for Dash to Dock, etc.
+        const workArea = this._layoutManager.getWorkAreaForMonitor(monitorIndex);
+        return {
+            x: workArea.x,
+            y: workArea.y,
+            width: workArea.width,
+            height: workArea.height
+        };
     }
 
     /**
@@ -249,5 +264,15 @@ export class MonitorManager {
      */
     hasMonitor(monitorIndex) {
         return monitorIndex >= 0 && monitorIndex < this._monitors.length;
+    }
+
+    /**
+     * Register callback for monitor changes
+     * @param {Function} callback - (oldMonitors, newMonitors) => void
+     */
+    onMonitorsChanged(callback) {
+        if (typeof callback === 'function') {
+            this._changeCallbacks.push(callback);
+        }
     }
 }

@@ -10,6 +10,9 @@
  * Does NOT handle rendering - that's LayoutOverlayRenderer's job
  */
 
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
 import { Logger } from '../core/logger.js';
 
 export class LayoutOverlayInteraction {

@@ -10,6 +10,8 @@
  * This is the main layout overlay that shows zones when user triggers it.
  */
 
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { BaseOverlay } from './baseOverlay.js';
 import { LayoutOverlayRenderer } from './layoutOverlayRenderer.js';
 import { LayoutOverlayInteraction } from './layoutOverlayInteraction.js';

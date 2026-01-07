@@ -208,10 +208,13 @@ export class InteractionStateManager {
 
         // Determine monitor
         const rect = window.get_frame_rect();
-        const monitorIndex = this._monitorManager.getMonitorAtPoint(
-            rect.x + rect.width / 2,
-            rect.y + rect.height / 2
-        );
+        const centerX = rect.x + rect.width / 2;
+        const centerY = rect.y + rect.height / 2;
+        const monitorIndex = this._monitorManager.getMonitorAtPoint(centerX, centerY);
+
+        // Debug logging
+        console.log(`SnapKit DEBUG: _onWindowDragStart - window rect: x=${rect.x}, y=${rect.y}, w=${rect.width}, h=${rect.height}`);
+        console.log(`SnapKit DEBUG: _onWindowDragStart - center: (${centerX}, ${centerY}) -> monitorIndex=${monitorIndex}`);
 
         this._currentMonitor = monitorIndex;
 

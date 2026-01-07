@@ -11,6 +11,8 @@
  * - Tile group management
  */
 
+import Meta from 'gi://Meta';
+
 import { Logger } from '../core/logger.js';
 
 /**

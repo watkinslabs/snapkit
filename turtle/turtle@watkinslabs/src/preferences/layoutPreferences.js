@@ -11,6 +11,11 @@
  * Integrates with GSettings and LayoutManager.
  */
 
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 
 export class LayoutPreferences {
@@ -98,7 +103,7 @@ export class LayoutPreferences {
         this._createMonitorSettings(settingsBox);
         this._createAdvancedSettings(settingsBox);
 
-        scrollView.add_actor(settingsBox);
+        scrollView.add_child(settingsBox);
         this._container.add_child(scrollView);
 
         // Create footer with actions
@@ -106,7 +111,7 @@ export class LayoutPreferences {
         this._container.add_child(footer);
 
         // Add to parent
-        parent.add_actor(this._container);
+        parent.add_child(this._container);
 
         this._logger.info('LayoutPreferences initialized');
     }

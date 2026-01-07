@@ -1,3 +1,5 @@
+import Meta from 'gi://Meta';
+
 import { BaseState } from './baseState.js';
 
 /**
@@ -15,6 +17,7 @@ export class DragState extends BaseState {
         this._draggedWindow = null;
         this._dragStartTime = null;
         this._dragStartPosition = null;
+        this._currentPosition = null;
     }
 
     /**
@@ -66,6 +69,27 @@ export class DragState extends BaseState {
     }
 
     /**
+     * Get current position during drag
+     *
+     * @returns {{x: number, y: number}|null}
+     */
+    get currentPosition() {
+        return this._currentPosition ? { ...this._currentPosition } : null;
+    }
+
+    /**
+     * Update current position during drag
+     *
+     * @param {Object} position - {x, y} current position
+     */
+    updatePosition(position) {
+        if (!this._isDragging) {
+            return;
+        }
+        this._currentPosition = position ? { x: position.x, y: position.y } : null;
+    }
+
+    /**
      * Start drag operation
      *
      * @param {Meta.Window} window - Window being dragged
@@ -106,6 +130,7 @@ export class DragState extends BaseState {
         this._draggedWindow = null;
         this._dragStartTime = null;
         this._dragStartPosition = null;
+        this._currentPosition = null;
 
         const newState = this._getStateSnapshot();
         this._notifySubscribers(oldState, newState);
@@ -121,6 +146,7 @@ export class DragState extends BaseState {
         this._draggedWindow = null;
         this._dragStartTime = null;
         this._dragStartPosition = null;
+        this._currentPosition = null;
 
         const newState = this._getStateSnapshot();
         this._notifySubscribers(oldState, newState);

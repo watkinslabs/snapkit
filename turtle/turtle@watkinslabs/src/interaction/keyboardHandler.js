@@ -11,6 +11,8 @@
  * Configurable keybindings via updateConfig().
  */
 
+import Clutter from 'gi://Clutter';
+
 import { Logger } from '../core/logger.js';
 import { State } from '../state/extensionState.js';
 

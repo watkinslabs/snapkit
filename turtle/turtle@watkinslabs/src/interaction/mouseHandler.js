@@ -11,6 +11,12 @@
  * Only triggers when ExtensionState is CLOSED.
  */
 
+import Clutter from 'gi://Clutter';
+import St from 'gi://St';
+import GLib from 'gi://GLib';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { Logger } from '../core/logger.js';
 import { State } from '../state/extensionState.js';
 
@@ -34,11 +40,9 @@ export class MouseHandler {
 
         // Trigger zone configuration
         this._config = {
-            edgeSize: 2,           // Edge trigger zone size (pixels)
-            cornerSize: 10,        // Corner trigger zone size (pixels)
-            debounceDelay: 100,    // Debounce delay (ms)
-            enableEdges: true,     // Enable edge triggers
-            enableCorners: true    // Enable corner triggers
+            triggerEdge: 'top',    // Which edge triggers overlay (top, bottom, left, right)
+            edgeSize: 5,           // Edge trigger zone size (pixels)
+            debounceDelay: 100     // Debounce delay (ms)
         };
 
         // State
@@ -46,6 +50,9 @@ export class MouseHandler {
         this._lastTriggerTime = 0;
         this._currentZone = null;
         this._lastPosition = { x: 0, y: 0 };
+
+        // Edge actors for hot edges
+        this._edgeActors = [];
     }
 
     /**
@@ -57,18 +64,138 @@ export class MouseHandler {
             return;
         }
 
-        // Register motion handler with event coordinator
-        this._eventCoordinator.registerHandler('motion', (event) => {
-            return this._onMotion(event);
-        });
+        // Create hot edge actors for each monitor
+        this._createEdgeActors();
 
         // Subscribe to state changes
         this._extensionState.subscribe((oldState, newState) => {
             this._onStateChange(oldState, newState);
         });
 
+        // Listen for monitor changes to recreate edges
+        this._monitorManager.onMonitorsChanged(() => {
+            this._destroyEdgeActors();
+            this._createEdgeActors();
+        });
+
         this._enabled = true;
         this._logger.info('MouseHandler initialized');
+    }
+
+    /**
+     * Create hot edge actor for the configured trigger edge
+     * @private
+     */
+    _createEdgeActors() {
+        const monitors = this._monitorManager.getMonitors();
+        const edge = this._config.triggerEdge;
+        const edgeSize = this._config.edgeSize;
+
+        for (const monitor of monitors) {
+            const { geometry } = monitor;
+
+            switch (edge) {
+                case 'top':
+                    this._createEdgeActor('top', monitor.index,
+                        geometry.x, geometry.y,
+                        geometry.width, edgeSize);
+                    break;
+                case 'bottom':
+                    this._createEdgeActor('bottom', monitor.index,
+                        geometry.x, geometry.y + geometry.height - edgeSize,
+                        geometry.width, edgeSize);
+                    break;
+                case 'left':
+                    this._createEdgeActor('left', monitor.index,
+                        geometry.x, geometry.y,
+                        edgeSize, geometry.height);
+                    break;
+                case 'right':
+                    this._createEdgeActor('right', monitor.index,
+                        geometry.x + geometry.width - edgeSize, geometry.y,
+                        edgeSize, geometry.height);
+                    break;
+            }
+        }
+
+        this._logger.debug('Created edge actor', { edge, count: this._edgeActors.length });
+    }
+
+    /**
+     * Create a single edge actor
+     * @private
+     */
+    _createEdgeActor(edge, monitorIndex, x, y, width, height) {
+        const actor = new St.Widget({
+            name: `turtle-edge-${edge}-${monitorIndex}`,
+            reactive: true,
+            x, y, width, height,
+            opacity: 0  // Invisible
+        });
+
+        actor.connect('enter-event', () => {
+            this._onEdgeEnter(edge, monitorIndex);
+            return Clutter.EVENT_STOP;
+        });
+
+        actor.connect('leave-event', () => {
+            this._onEdgeLeave();
+            return Clutter.EVENT_STOP;
+        });
+
+        Main.layoutManager.addChrome(actor, {
+            affectsInputRegion: true,
+            affectsStruts: false,
+            trackFullscreen: true
+        });
+
+        this._edgeActors.push(actor);
+    }
+
+    /**
+     * Destroy all edge actors
+     * @private
+     */
+    _destroyEdgeActors() {
+        for (const actor of this._edgeActors) {
+            Main.layoutManager.removeChrome(actor);
+            actor.destroy();
+        }
+        this._edgeActors = [];
+    }
+
+    /**
+     * Handle edge enter
+     * @private
+     */
+    _onEdgeEnter(edge, monitorIndex) {
+        if (this._extensionState.current !== State.CLOSED) {
+            return;
+        }
+
+        // Debounce
+        const now = Date.now();
+        if (now - this._lastTriggerTime < this._config.debounceDelay) {
+            return;
+        }
+        this._lastTriggerTime = now;
+
+        this._logger.debug('Edge triggered', { edge, monitorIndex });
+
+        // Emit request to open overlay
+        this._eventBus.emit('request-open-overlay', {
+            monitorIndex,
+            trigger: 'edge',
+            edge
+        });
+    }
+
+    /**
+     * Handle edge leave
+     * @private
+     */
+    _onEdgeLeave() {
+        // Could emit event if needed
     }
 
     /**
@@ -296,8 +423,14 @@ export class MouseHandler {
      * @param {Object} config - Configuration options
      */
     updateConfig(config) {
+        let needsEdgeRecreate = false;
+
         if (config.edgeSize !== undefined) {
-            this._config.edgeSize = Math.max(1, config.edgeSize);
+            const newSize = Math.max(1, config.edgeSize);
+            if (this._config.edgeSize !== newSize) {
+                this._config.edgeSize = newSize;
+                needsEdgeRecreate = true;
+            }
         }
         if (config.cornerSize !== undefined) {
             this._config.cornerSize = Math.max(1, config.cornerSize);
@@ -310,6 +443,19 @@ export class MouseHandler {
         }
         if (config.enableCorners !== undefined) {
             this._config.enableCorners = !!config.enableCorners;
+        }
+        if (config.triggerEdge !== undefined) {
+            const validEdges = ['top', 'bottom', 'left', 'right'];
+            if (validEdges.includes(config.triggerEdge) && this._config.triggerEdge !== config.triggerEdge) {
+                this._config.triggerEdge = config.triggerEdge;
+                needsEdgeRecreate = true;
+            }
+        }
+
+        // Recreate edge actors if edge or size changed
+        if (needsEdgeRecreate && this._enabled) {
+            this._destroyEdgeActors();
+            this._createEdgeActors();
         }
 
         this._logger.debug('Configuration updated', this._config);
@@ -354,6 +500,9 @@ export class MouseHandler {
      */
     destroy() {
         this.disable();
+
+        // Destroy edge actors
+        this._destroyEdgeActors();
 
         // Unregister handler
         this._eventCoordinator.unregisterHandler('motion');

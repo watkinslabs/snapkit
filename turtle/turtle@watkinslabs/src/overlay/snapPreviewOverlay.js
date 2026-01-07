@@ -9,6 +9,11 @@
  * This overlay is shown during drag, not for interactive select.
  */
 
+import St from 'gi://St';
+import Meta from 'gi://Meta';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
 import { BaseOverlay } from './baseOverlay.js';
 import { Logger } from '../core/logger.js';
 
@@ -47,6 +52,10 @@ export class SnapPreviewOverlay extends BaseOverlay {
             return;
         }
 
+        // Debug logging
+        console.log(`SnapKit DEBUG: SnapPreviewOverlay.showPreview - monitorIndex=${monitorIndex}`);
+        console.log(`SnapKit DEBUG: SnapPreviewOverlay.showPreview - layout.id=${layout?.id}, layout.name=${layout?.name}`);
+
         // Get monitor work area
         const workArea = this._monitorManager.getWorkArea(monitorIndex);
         if (!workArea) {
@@ -61,6 +70,8 @@ export class SnapPreviewOverlay extends BaseOverlay {
                 padding: options.padding ?? 0,
                 overrides: options.overrides ?? []
             });
+
+            console.log(`SnapKit DEBUG: SnapPreviewOverlay - resolved ${this._zones.length} zones`);
 
             // Initialize if needed
             if (!this._container) {
@@ -110,7 +121,7 @@ export class SnapPreviewOverlay extends BaseOverlay {
                 reactive: false
             });
 
-            this._container.add_actor(zoneActor);
+            this._container.add_child(zoneActor);
             this._zoneActors.push({ actor: zoneActor, zone });
         }
     }
@@ -252,8 +263,8 @@ export class SnapPreviewOverlay extends BaseOverlay {
             zone.y + (zone.height - titleLabel.get_height()) / 2
         );
 
-        this._container.add_actor(this._previewActor);
-        this._container.add_actor(titleLabel);
+        this._container.add_child(this._previewActor);
+        this._container.add_child(titleLabel);
 
         this._logger.debug('Window preview shown', { zoneIndex, windowTitle: window.get_title() });
     }

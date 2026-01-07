@@ -11,7 +11,7 @@ VERSION := $(shell grep -o '"version": *[0-9]*' $(METADATA) 2>/dev/null | grep -
 ZIP_NAME = $(EXTENSION_UUID).v$(VERSION).shell-extension.zip
 
 # Extension files to install/package
-FILES = extension.js metadata.json
+FILES = extension.js prefs.js metadata.json
 DIRS = src schemas
 
 # Colors for output

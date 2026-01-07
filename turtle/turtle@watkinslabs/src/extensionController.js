@@ -32,6 +32,7 @@ import { MonitorManager } from './tiling/monitorManager.js';
 import { WindowTracker } from './tiling/windowTracker.js';
 import { SnapHandler } from './tiling/snapHandler.js';
 import { TileManager } from './tiling/tileManager.js';
+import { DividerSyncManager } from './tiling/dividerSyncManager.js';
 
 import { LayoutOverlay } from './overlay/layoutOverlay.js';
 import { SnapPreviewOverlay } from './overlay/snapPreviewOverlay.js';
@@ -46,10 +47,13 @@ import { InteractionStateManager } from './interaction/interactionStateManager.j
 import { WindowSelector } from './ui/windowSelector.js';
 import { LayoutEditor } from './ui/layoutEditor.js';
 import { LayoutSwitcher } from './ui/layoutSwitcher.js';
+import { LayoutPickerBar } from './ui/layoutPickerBar.js';
 
 import { AppearancePreferences } from './preferences/appearancePreferences.js';
 import { BehaviorPreferences } from './preferences/behaviorPreferences.js';
 import { LayoutPreferences } from './preferences/layoutPreferences.js';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 export class ExtensionController {
     constructor() {
@@ -132,7 +136,7 @@ export class ExtensionController {
         sc.register('snapHandler', () => new SnapHandler(
             sc.get('layoutResolver'),
             sc.get('windowTracker'),
-            sc.get('eventBus')
+            sc.get('monitorManager')
         ), true);
         sc.register('tileManager', () => new TileManager(
             sc.get('layoutResolver'),
@@ -141,12 +145,21 @@ export class ExtensionController {
             sc.get('snapHandler'),
             sc.get('eventBus')
         ), true);
+        sc.register('dividerSyncManager', () => new DividerSyncManager(
+            sc.get('windowTracker'),
+            sc.get('overrideStore'),
+            sc.get('layoutResolver'),
+            sc.get('layoutManager'),
+            sc.get('monitorManager'),
+            sc.get('snapHandler'),
+            sc.get('eventBus')
+        ), true);
 
         // Overlay services
         sc.register('layoutOverlay', () => new LayoutOverlay(
+            sc.get('eventBus'),
             sc.get('layoutResolver'),
-            sc.get('monitorManager'),
-            sc.get('eventBus')
+            sc.get('monitorManager')
         ), true);
         sc.register('snapPreviewOverlay', () => new SnapPreviewOverlay(
             sc.get('layoutResolver'),
@@ -200,6 +213,13 @@ export class ExtensionController {
             sc.get('layoutResolver'),
             sc.get('eventBus')
         ), true);
+        sc.register('layoutPickerBar', () => new LayoutPickerBar(
+            sc.get('layoutManager'),
+            sc.get('layoutResolver'),
+            sc.get('monitorManager'),
+            sc.get('snapHandler'),
+            sc.get('eventBus')
+        ), true);
 
         // Preferences services
         sc.register('appearancePreferences', () => new AppearancePreferences(sc.get('eventBus')), true);
@@ -223,7 +243,7 @@ export class ExtensionController {
         // Initialize monitors first
         cm.register('monitorManager', () => {
             const mm = this._serviceContainer.get('monitorManager');
-            mm.initialize(this._serviceContainer.get('layoutManager'));
+            mm.initialize(Main.layoutManager);
             return mm;
         });
 
@@ -232,6 +252,13 @@ export class ExtensionController {
             const ism = this._serviceContainer.get('interactionStateManager');
             ism.initialize();
             return ism;
+        });
+
+        // Initialize divider sync manager
+        cm.register('dividerSyncManager', () => {
+            const dsm = this._serviceContainer.get('dividerSyncManager');
+            dsm.initialize();
+            return dsm;
         });
 
         // Initialize overlays
@@ -270,6 +297,12 @@ export class ExtensionController {
             const ls = this._serviceContainer.get('layoutSwitcher');
             ls.initialize(Main.uiGroup);
             return ls;
+        });
+
+        cm.register('layoutPickerBar', () => {
+            const lpb = this._serviceContainer.get('layoutPickerBar');
+            lpb.initialize(Main.uiGroup);
+            return lpb;
         });
 
         // Initialize preferences
@@ -394,6 +427,19 @@ export class ExtensionController {
             })
         );
 
+        // Layout picker bar events
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-picker-hidden', () => {
+                this._handleLayoutPickerHidden();
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('zone-snapped', (data) => {
+                this._handleZoneSnapped(data);
+            })
+        );
+
         this._logger.debug('Event handlers wired');
     }
 
@@ -405,26 +451,15 @@ export class ExtensionController {
     _handleOpenOverlay(data) {
         const { monitorIndex } = data;
         const extensionState = this._serviceContainer.get('extensionState');
-        const layoutState = this._serviceContainer.get('layoutState');
-        const layoutOverlay = this._serviceContainer.get('layoutOverlay');
+        const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
 
         // Transition to OPEN state
         extensionState.transitionTo(State.OPEN);
 
-        // Get layout for monitor
-        const layoutId = layoutState.getLayoutForMonitor(monitorIndex) || 'grid-2x2';
-        const layoutManager = this._serviceContainer.get('layoutManager');
-        const layout = layoutManager.getLayout(layoutId);
+        // Show the layout picker bar (Windows 11 style)
+        layoutPickerBar.show(monitorIndex);
 
-        if (!layout) {
-            this._logger.error('Layout not found', { layoutId });
-            return;
-        }
-
-        // Show overlay
-        layoutOverlay.showLayout(monitorIndex, layout);
-
-        this._logger.debug('Overlay opened', { monitorIndex, layoutId });
+        this._logger.debug('Layout picker bar opened', { monitorIndex });
     }
 
     /**
@@ -433,15 +468,15 @@ export class ExtensionController {
      */
     _handleCloseOverlay() {
         const extensionState = this._serviceContainer.get('extensionState');
-        const layoutOverlay = this._serviceContainer.get('layoutOverlay');
+        const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
 
-        // Hide overlay
-        layoutOverlay.hide();
+        // Hide layout picker bar
+        layoutPickerBar.hide();
 
         // Transition to CLOSED
         extensionState.transitionTo(State.CLOSED);
 
-        this._logger.debug('Overlay closed');
+        this._logger.debug('Layout picker bar closed');
     }
 
     /**
@@ -453,20 +488,35 @@ export class ExtensionController {
         const { monitorIndex, window } = data;
         const layoutState = this._serviceContainer.get('layoutState');
         const snapPreviewOverlay = this._serviceContainer.get('snapPreviewOverlay');
-
-        // Get layout for monitor
-        const layoutId = layoutState.getLayoutForMonitor(monitorIndex) || 'grid-2x2';
         const layoutManager = this._serviceContainer.get('layoutManager');
+        const overrideStore = this._serviceContainer.get('overrideStore');
+
+        // Debug: show all layouts in state
+        const allLayouts = layoutState.getAllLayouts();
+        console.log(`SnapKit DEBUG: _handleSnapPreview - checking monitor ${monitorIndex}`);
+        console.log(`SnapKit DEBUG: All layouts in state:`, JSON.stringify(Array.from(allLayouts.entries())));
+
+        // Get layout for monitor - this should use the layout set by zone-snapped
+        const rawLayoutId = layoutState.getLayoutForMonitor(monitorIndex);
+        const layoutId = rawLayoutId || 'half-split';
+
+        // Log for debugging
+        console.log(`SnapKit DEBUG: Drag snap preview - rawLayoutId=${rawLayoutId}, using layout ${layoutId} for monitor ${monitorIndex}`);
+
         const layout = layoutManager.getLayout(layoutId);
 
         if (!layout) {
+            this._logger.error('Layout not found for snap preview', { layoutId, monitorIndex });
             return;
         }
 
-        // Show snap preview
-        snapPreviewOverlay.showPreview(monitorIndex, layout);
+        // Get any divider overrides for this layout/monitor
+        const overrides = overrideStore.getOverrides(layoutId, monitorIndex);
 
-        this._logger.debug('Snap preview shown', { monitorIndex });
+        // Show snap preview with overrides
+        snapPreviewOverlay.showPreview(monitorIndex, layout, { overrides });
+
+        this._logger.debug('Snap preview shown', { monitorIndex, layoutId, overrideCount: overrides.length });
     }
 
     /**
@@ -492,6 +542,8 @@ export class ExtensionController {
         const snapPreviewOverlay = this._serviceContainer.get('snapPreviewOverlay');
         const snapHandler = this._serviceContainer.get('snapHandler');
         const layoutState = this._serviceContainer.get('layoutState');
+        const layoutManager = this._serviceContainer.get('layoutManager');
+        const overrideStore = this._serviceContainer.get('overrideStore');
 
         // Get highlighted zone from preview
         const zoneIndex = snapPreviewOverlay.highlightZoneAtCursor(position.x, position.y);
@@ -502,23 +554,29 @@ export class ExtensionController {
             return;
         }
 
-        // Get layout
-        const layoutId = layoutState.getLayoutForMonitor(monitorIndex) || 'grid-2x2';
-        const layoutManager = this._serviceContainer.get('layoutManager');
+        // Get layout - same logic as snap preview
+        const layoutId = layoutState.getLayoutForMonitor(monitorIndex) || 'half-split';
         const layout = layoutManager.getLayout(layoutId);
 
         if (!layout) {
+            this._logger.error('Layout not found for snap', { layoutId, monitorIndex });
             snapPreviewOverlay.hide();
             return;
         }
 
-        // Snap window to zone
-        snapHandler.snapToZone(window, monitorIndex, layoutId, zoneIndex, layout);
+        // Get divider overrides
+        const overrides = overrideStore.getOverrides(layoutId, monitorIndex);
+
+        // Log for debugging
+        console.log(`SnapKit: Snapping window to zone ${zoneIndex} in layout ${layoutId} on monitor ${monitorIndex}`);
+
+        // Snap window to zone with overrides
+        snapHandler.snapToZone(window, monitorIndex, layoutId, zoneIndex, layout, { overrides });
 
         // Hide preview
         snapPreviewOverlay.hide();
 
-        this._logger.debug('Window snapped', { zoneIndex, monitorIndex });
+        this._logger.debug('Window snapped via drag', { zoneIndex, monitorIndex, layoutId });
     }
 
     /**
@@ -527,11 +585,13 @@ export class ExtensionController {
      */
     _handleCancel() {
         const extensionState = this._serviceContainer.get('extensionState');
+        const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
 
         // Handle based on current state
         switch (extensionState.current) {
             case State.OPEN:
-                this._handleCloseOverlay();
+                layoutPickerBar.hide();
+                extensionState.transitionTo(State.CLOSED);
                 break;
 
             case State.SELECT_WINDOW:
@@ -651,6 +711,72 @@ export class ExtensionController {
     }
 
     /**
+     * Handle layout picker hidden
+     * @private
+     */
+    _handleLayoutPickerHidden() {
+        const extensionState = this._serviceContainer.get('extensionState');
+        const layoutState = this._serviceContainer.get('layoutState');
+
+        // Debug: check layout state at this point
+        const allLayouts = layoutState.getAllLayouts();
+        console.log(`SnapKit DEBUG: _handleLayoutPickerHidden - current layouts before state transition:`, JSON.stringify(Array.from(allLayouts.entries())));
+
+        // Transition to CLOSED if still OPEN
+        if (extensionState.current === State.OPEN) {
+            extensionState.transitionTo(State.CLOSED);
+        }
+
+        // Check again after transition
+        const afterLayouts = layoutState.getAllLayouts();
+        console.log(`SnapKit DEBUG: _handleLayoutPickerHidden - current layouts after state transition:`, JSON.stringify(Array.from(afterLayouts.entries())));
+
+        this._logger.debug('Layout picker hidden, state closed');
+    }
+
+    /**
+     * Handle zone snapped event from layout picker
+     * @private
+     * @param {Object} data
+     */
+    _handleZoneSnapped(data) {
+        console.log(`SnapKit DEBUG: _handleZoneSnapped CALLED with data:`, JSON.stringify({
+            layoutId: data.layoutId,
+            zoneIndex: data.zoneIndex,
+            monitorIndex: data.monitorIndex,
+            windowTitle: data.window?.get_title()
+        }));
+
+        const { layoutId, zoneIndex, monitorIndex, window } = data;
+        const layoutState = this._serviceContainer.get('layoutState');
+
+        // Log BEFORE setting
+        const beforeLayoutId = layoutState.getLayoutForMonitor(monitorIndex);
+        console.log(`SnapKit DEBUG: BEFORE setLayoutForMonitor - monitor ${monitorIndex} has layout: ${beforeLayoutId}`);
+
+        // Update layout state for this monitor - this is critical for drag/snap to work
+        layoutState.setLayoutForMonitor(monitorIndex, layoutId);
+
+        // Verify the layout was set
+        const verifyLayoutId = layoutState.getLayoutForMonitor(monitorIndex);
+
+        // Log all monitors state
+        const allMonitors = layoutState.getAllLayouts();
+        console.log(`SnapKit DEBUG: AFTER setLayoutForMonitor - all layouts:`, JSON.stringify(Array.from(allMonitors.entries())));
+
+        this._logger.info('Zone snapped via picker - layout set for monitor', {
+            layoutId,
+            verifyLayoutId,
+            zoneIndex,
+            monitorIndex,
+            windowTitle: window?.get_title()
+        });
+
+        // Also log to console for debugging
+        console.log(`SnapKit DEBUG: Layout ${layoutId} set for monitor ${monitorIndex} (verified: ${verifyLayoutId})`);
+    }
+
+    /**
      * Handle layout switched
      * @private
      * @param {Object} data
@@ -683,9 +809,21 @@ export class ExtensionController {
      */
     _handleAppearanceSettings(data) {
         const { settings } = data;
+        const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
 
-        // Apply appearance settings to overlays
-        // In full implementation, would update overlay styles
+        // Apply appearance settings to layout picker bar
+        layoutPickerBar.updateConfig({
+            backgroundColor: settings.overlayBackgroundColor,
+            borderRadius: settings.overlayBorderRadius,
+            zoneColor: settings.zoneColor,
+            zoneHoverColor: settings.zoneHoverColor,
+            zoneBorderColor: settings.zoneBorderColor,
+            zoneBorderHoverColor: settings.zoneBorderHoverColor,
+            textColor: settings.textColor,
+            thumbnailWidth: settings.thumbnailWidth,
+            thumbnailHeight: settings.thumbnailHeight,
+            animationDuration: settings.animationDuration
+        });
 
         this._logger.info('Appearance settings applied', settings);
 
@@ -702,6 +840,7 @@ export class ExtensionController {
         const { settings } = data;
         const mouseHandler = this._serviceContainer.get('mouseHandler');
         const keyboardHandler = this._serviceContainer.get('keyboardHandler');
+        const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
 
         // Apply trigger zone settings
         mouseHandler.updateConfig({
@@ -709,7 +848,13 @@ export class ExtensionController {
             cornerSize: settings.cornerSize,
             enableEdges: settings.enableEdges,
             enableCorners: settings.enableCorners,
-            debounceDelay: settings.debounceDelay
+            debounceDelay: settings.debounceDelay,
+            triggerEdge: settings.triggerEdge
+        });
+
+        // Apply layout picker bar settings
+        layoutPickerBar.updateConfig({
+            edge: settings.triggerEdge || 'top'
         });
 
         // Apply keyboard shortcuts
