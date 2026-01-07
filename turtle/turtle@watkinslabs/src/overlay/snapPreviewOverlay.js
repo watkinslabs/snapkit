@@ -36,6 +36,8 @@ export class SnapPreviewOverlay extends BaseOverlay {
         this._highlightedZone = null;
         this._zoneActors = [];
         this._previewActor = null;
+        this._currentWindow = null;
+        this._workArea = null;
 
         this._logger = new Logger('SnapPreviewOverlay');
     }
@@ -45,7 +47,7 @@ export class SnapPreviewOverlay extends BaseOverlay {
      *
      * @param {number} monitorIndex
      * @param {Object} layout - Layout definition
-     * @param {Object} options - {margin, padding, overrides, style}
+     * @param {Object} options - {margin, padding, overrides, style, window}
      */
     showPreview(monitorIndex, layout, options = {}) {
         if (this._destroyed) {
@@ -56,6 +58,9 @@ export class SnapPreviewOverlay extends BaseOverlay {
         console.log(`SnapKit DEBUG: SnapPreviewOverlay.showPreview - monitorIndex=${monitorIndex}`);
         console.log(`SnapKit DEBUG: SnapPreviewOverlay.showPreview - layout.id=${layout?.id}, layout.name=${layout?.name}`);
 
+        // Store window for size validation
+        this._currentWindow = options.window || null;
+
         // Get monitor work area
         const workArea = this._monitorManager.getWorkArea(monitorIndex);
         if (!workArea) {
@@ -64,6 +69,9 @@ export class SnapPreviewOverlay extends BaseOverlay {
         }
 
         try {
+            // Store workArea for relative positioning
+            this._workArea = workArea;
+
             // Resolve layout to zones
             this._zones = this._layoutResolver.resolve(layout, workArea, {
                 margin: options.margin ?? 0,
@@ -108,14 +116,18 @@ export class SnapPreviewOverlay extends BaseOverlay {
         };
 
         for (const zone of this._zones) {
+            // Use relative coordinates (zones are in absolute screen coords, container is positioned at workArea)
+            const relativeX = zone.x - this._workArea.x;
+            const relativeY = zone.y - this._workArea.y;
+
             const zoneActor = new St.Widget({
                 style: `
                     background-color: transparent;
                     border: ${s.borderWidth}px solid ${s.borderColor};
                     border-radius: 2px;
                 `,
-                x: zone.x,
-                y: zone.y,
+                x: relativeX,
+                y: relativeY,
                 width: zone.width,
                 height: zone.height,
                 reactive: false
@@ -187,9 +199,13 @@ export class SnapPreviewOverlay extends BaseOverlay {
             return;
         }
 
+        // Check if window can fit (if we have a current window)
+        const canFit = !this._currentWindow || this._canWindowFitInZone(this._currentWindow, zoneData.zone);
+
+        // Use red highlight if window can't fit
         zoneData.actor.set_style(`
-            background-color: rgba(150, 200, 255, 0.3);
-            border: 2px solid rgba(255, 255, 255, 0.8);
+            background-color: ${canFit ? 'rgba(150, 200, 255, 0.3)' : 'rgba(255, 100, 100, 0.4)'};
+            border: 2px solid ${canFit ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 80, 80, 0.9)'};
             border-radius: 2px;
         `);
     }
@@ -213,6 +229,155 @@ export class SnapPreviewOverlay extends BaseOverlay {
     }
 
     /**
+     * Check if window can fit in zone
+     * @private
+     * @param {Meta.Window} window
+     * @param {Object} zone
+     * @returns {boolean}
+     */
+    _canWindowFitInZone(window, zone) {
+        if (!window) {
+            console.log('SnapKit DEBUG: No window provided for size check');
+            return true;
+        }
+
+        try {
+            const rect = window.get_frame_rect();
+            const windowTitle = window.get_title();
+            const allowsResize = window.allows_resize();
+
+            // Debug: check window backend and properties
+            const windowType = window.get_window_type();
+            const wmClass = window.get_wm_class();
+            const clientType = window.get_client_type ? window.get_client_type() : 'unknown';
+            const bufferRect = window.get_buffer_rect();
+
+            console.log(`SnapKit DEBUG: Checking window fit: "${windowTitle}"`);
+            console.log(`  WM Class: ${wmClass}`);
+            console.log(`  Window Type: ${windowType}`);
+            console.log(`  Client Type: ${clientType} (0=X11, 1=Wayland)`);
+            console.log(`  Zone: ${zone.width}x${zone.height}`);
+            console.log(`  Window frame rect: ${rect.width}x${rect.height}`);
+            console.log(`  Window buffer rect: ${bufferRect.width}x${bufferRect.height}`);
+            console.log(`  Allows resize: ${allowsResize}`);
+            console.log(`  Allows move: ${window.allows_move ? window.allows_move() : 'unknown'}`);
+            console.log(`  Can maximize: ${window.can_maximize ? window.can_maximize() : 'unknown'}`);
+            console.log(`  Is override redirect: ${window.is_override_redirect ? window.is_override_redirect() : 'unknown'}`);
+
+            // Try to get minimum size hints (both X11 and Wayland)
+            let minWidth = null;
+            let minHeight = null;
+            let maxWidth = null;
+            let maxHeight = null;
+
+            // Check what size hint methods are available
+            console.log(`  Available size methods:`);
+            console.log(`    - get_minimum_size_hints: ${typeof window.get_minimum_size_hints === 'function' ? 'YES' : 'NO'}`);
+            console.log(`    - get_maximum_size_hints: ${typeof window.get_maximum_size_hints === 'function' ? 'YES' : 'NO'}`);
+            console.log(`    - get_size_hints: ${typeof window.get_size_hints === 'function' ? 'YES' : 'NO'}`);
+            console.log(`    - get_mutter_hints: ${typeof window.get_mutter_hints === 'function' ? 'YES' : 'NO'}`);
+
+            // Try get_minimum_size_hints()
+            if (typeof window.get_minimum_size_hints === 'function') {
+                try {
+                    const minHints = window.get_minimum_size_hints();
+                    console.log(`  get_minimum_size_hints() returned:`, minHints);
+
+                    if (minHints && Array.isArray(minHints) && minHints.length === 2) {
+                        // Returns [min_width, min_height], may be [-1, -1] if unset
+                        if (minHints[0] > 0) minWidth = minHints[0];
+                        if (minHints[1] > 0) minHeight = minHints[1];
+                        console.log(`  Parsed minimum size: ${minWidth || 'none'}x${minHeight || 'none'}`);
+                    } else {
+                        console.log(`  Minimum size hints: not available or invalid format`);
+                    }
+                } catch (e) {
+                    console.log(`  Error getting minimum size hints: ${e.message}`);
+                }
+            }
+
+            // Try get_maximum_size_hints() if it exists
+            if (typeof window.get_maximum_size_hints === 'function') {
+                try {
+                    const maxHints = window.get_maximum_size_hints();
+                    console.log(`  get_maximum_size_hints() returned:`, maxHints);
+
+                    if (maxHints && Array.isArray(maxHints) && maxHints.length === 2) {
+                        if (maxHints[0] > 0) maxWidth = maxHints[0];
+                        if (maxHints[1] > 0) maxHeight = maxHints[1];
+                        console.log(`  Parsed maximum size: ${maxWidth || 'none'}x${maxHeight || 'none'}`);
+                    }
+                } catch (e) {
+                    console.log(`  Error getting maximum size hints: ${e.message}`);
+                }
+            }
+
+            // Try get_size_hints() if it exists (old API?)
+            if (typeof window.get_size_hints === 'function') {
+                try {
+                    const hints = window.get_size_hints();
+                    console.log(`  get_size_hints() returned:`, hints);
+                } catch (e) {
+                    console.log(`  Error getting size hints: ${e.message}`);
+                }
+            }
+
+            // Try get_mutter_hints() if it exists
+            if (typeof window.get_mutter_hints === 'function') {
+                try {
+                    const mutterHints = window.get_mutter_hints();
+                    console.log(`  get_mutter_hints() returned:`, mutterHints);
+                } catch (e) {
+                    console.log(`  Error getting mutter hints: ${e.message}`);
+                }
+            }
+
+            // Determine effective minimum size for validation
+            let effectiveMinWidth;
+            let effectiveMinHeight;
+
+            if (!allowsResize) {
+                // Fixed-size windows: current size IS the minimum
+                effectiveMinWidth = rect.width;
+                effectiveMinHeight = rect.height;
+                console.log(`  Fixed-size window - Using current size as minimum: ${effectiveMinWidth}x${effectiveMinHeight}`);
+            } else if (minWidth || minHeight) {
+                // Resizable with hints: use hints, fallback to current size for missing dimensions
+                effectiveMinWidth = minWidth || rect.width;
+                effectiveMinHeight = minHeight || rect.height;
+                console.log(`  Resizable with hints - Effective minimum: ${effectiveMinWidth}x${effectiveMinHeight}`);
+                console.log(`    (min_width=${minWidth || 'unset'}, min_height=${minHeight || 'unset'})`);
+            } else {
+                // Resizable without hints: use current size as conservative estimate
+                effectiveMinWidth = rect.width;
+                effectiveMinHeight = rect.height;
+                console.log(`  Resizable without hints - Using current size as estimate: ${effectiveMinWidth}x${effectiveMinHeight}`);
+            }
+
+            // Check if window can fit
+            const canFit = zone.width >= effectiveMinWidth && zone.height >= effectiveMinHeight;
+            console.log(`  Final validation: Zone ${zone.width}x${zone.height} vs Effective Min ${effectiveMinWidth}x${effectiveMinHeight} => Can fit: ${canFit}`);
+
+            if (!canFit) {
+                this._logger.warn('Window cannot fit in zone', {
+                    windowTitle,
+                    zoneSize: `${zone.width}x${zone.height}`,
+                    effectiveMinSize: `${effectiveMinWidth}x${effectiveMinHeight}`,
+                    allowsResize,
+                    hasMinWidthHint: !!minWidth,
+                    hasMinHeightHint: !!minHeight
+                });
+            }
+
+            return canFit;
+
+        } catch (error) {
+            console.log('SnapKit DEBUG: Error checking window fit', error);
+            return true; // Assume it fits if we can't determine
+        }
+    }
+
+    /**
      * Show window preview in target zone
      *
      * @param {number} zoneIndex
@@ -223,6 +388,9 @@ export class SnapPreviewOverlay extends BaseOverlay {
             return;
         }
 
+        // Store current window
+        this._currentWindow = window;
+
         // Clear previous preview
         this._clearWindowPreview();
 
@@ -231,15 +399,22 @@ export class SnapPreviewOverlay extends BaseOverlay {
             return;
         }
 
-        // Create preview actor
+        // Check if window can fit
+        const canFit = this._canWindowFitInZone(window, zone);
+
+        // Use relative coordinates
+        const relativeX = zone.x - this._workArea.x;
+        const relativeY = zone.y - this._workArea.y;
+
+        // Create preview actor with color based on fit status
         this._previewActor = new St.Widget({
             style: `
-                background-color: rgba(100, 150, 255, 0.2);
-                border: 2px dashed rgba(255, 255, 255, 0.6);
+                background-color: ${canFit ? 'rgba(100, 150, 255, 0.2)' : 'rgba(255, 80, 80, 0.3)'};
+                border: 2px dashed ${canFit ? 'rgba(255, 255, 255, 0.6)' : 'rgba(255, 100, 100, 0.8)'};
                 border-radius: 4px;
             `,
-            x: zone.x,
-            y: zone.y,
+            x: relativeX,
+            y: relativeY,
             width: zone.width,
             height: zone.height,
             reactive: false
@@ -247,26 +422,30 @@ export class SnapPreviewOverlay extends BaseOverlay {
 
         // Add window title label
         const titleLabel = new St.Label({
-            text: window.get_title(),
+            text: canFit ? window.get_title() : `${window.get_title()} (Too Small)`,
             style: `
                 color: white;
                 font-size: 16px;
-                background-color: rgba(0, 0, 0, 0.7);
+                background-color: ${canFit ? 'rgba(0, 0, 0, 0.7)' : 'rgba(180, 50, 50, 0.9)'};
                 padding: 8px 12px;
                 border-radius: 4px;
             `
         });
 
-        // Center label in preview
+        // Center label in preview (using relative coordinates)
         titleLabel.set_position(
-            zone.x + (zone.width - titleLabel.get_width()) / 2,
-            zone.y + (zone.height - titleLabel.get_height()) / 2
+            relativeX + (zone.width - titleLabel.get_width()) / 2,
+            relativeY + (zone.height - titleLabel.get_height()) / 2
         );
 
         this._container.add_child(this._previewActor);
         this._container.add_child(titleLabel);
 
-        this._logger.debug('Window preview shown', { zoneIndex, windowTitle: window.get_title() });
+        this._logger.debug('Window preview shown', {
+            zoneIndex,
+            windowTitle: window.get_title(),
+            canFit
+        });
     }
 
     /**
@@ -299,6 +478,8 @@ export class SnapPreviewOverlay extends BaseOverlay {
         this._clearZoneActors();
         this._zones = null;
         this._highlightedZone = null;
+        this._currentWindow = null;
+        this._workArea = null;
 
         super.hide();
     }

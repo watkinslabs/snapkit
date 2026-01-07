@@ -125,34 +125,41 @@ export class SnapHandler {
         let x = zoneRect.x;
         let y = zoneRect.y;
 
-        // Try to get size hints if available (may not exist on all windows)
+        // Apply size constraints from window manager
         try {
-            if (typeof window.get_size_hints === 'function') {
-                const hints = window.get_size_hints();
+            // Get minimum size constraints (X11 WM_NORMAL_HINTS / Wayland xdg-toplevel min_size)
+            if (typeof window.get_minimum_size_hints === 'function') {
+                const minHints = window.get_minimum_size_hints();
+                if (minHints && Array.isArray(minHints) && minHints.length === 2) {
+                    // Returns [min_width, min_height], may be [-1, -1] if unset
+                    if (minHints[0] > 0 && width < minHints[0]) {
+                        width = minHints[0];
+                    }
+                    if (minHints[1] > 0 && height < minHints[1]) {
+                        height = minHints[1];
+                    }
+                }
+            }
 
-                // Apply min size constraint
-                if (hints?.min_width && width < hints.min_width) {
-                    width = hints.min_width;
+            // Get maximum size constraints
+            if (typeof window.get_maximum_size_hints === 'function') {
+                const maxHints = window.get_maximum_size_hints();
+                if (maxHints && Array.isArray(maxHints) && maxHints.length === 2) {
+                    if (maxHints[0] > 0 && width > maxHints[0]) {
+                        width = maxHints[0];
+                    }
+                    if (maxHints[1] > 0 && height > maxHints[1]) {
+                        height = maxHints[1];
+                    }
                 }
-                if (hints?.min_height && height < hints.min_height) {
-                    height = hints.min_height;
-                }
+            }
 
-                // Apply max size constraint
-                if (hints?.max_width && width > hints.max_width) {
-                    width = hints.max_width;
-                }
-                if (hints?.max_height && height > hints.max_height) {
-                    height = hints.max_height;
-                }
-
-                // Center window in zone if size was constrained
-                if (width < zoneRect.width) {
-                    x = zoneRect.x + Math.floor((zoneRect.width - width) / 2);
-                }
-                if (height < zoneRect.height) {
-                    y = zoneRect.y + Math.floor((zoneRect.height - height) / 2);
-                }
+            // Center window in zone if size was constrained
+            if (width < zoneRect.width) {
+                x = zoneRect.x + Math.floor((zoneRect.width - width) / 2);
+            }
+            if (height < zoneRect.height) {
+                y = zoneRect.y + Math.floor((zoneRect.height - height) / 2);
             }
         } catch (e) {
             // Ignore errors getting size hints

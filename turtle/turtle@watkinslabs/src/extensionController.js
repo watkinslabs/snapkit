@@ -388,6 +388,8 @@ export class ExtensionController {
 
         cm.register('layoutPreferences', () => {
             const lp = this._serviceContainer.get('layoutPreferences');
+            const le = this._serviceContainer.get('layoutEditor');
+            lp.setLayoutEditor(le);
             lp.initialize(Main.uiGroup);
             return lp;
         });
@@ -521,6 +523,58 @@ export class ExtensionController {
             })
         );
 
+        // Custom layout management events
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-created', (data) => {
+                this._handleLayoutCreated(data);
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-updated', (data) => {
+                this._handleLayoutUpdated(data);
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-deleted', (data) => {
+                this._handleLayoutDeleted(data);
+            })
+        );
+
+        // Divider override events (save when changed)
+        this._eventSubscriptions.push(
+            this._eventBus.on('divider-moved', (data) => {
+                this._handleDividerMoved(data);
+            })
+        );
+
+        // Import/export events
+        this._eventSubscriptions.push(
+            this._eventBus.on('layouts-export-requested', () => {
+                this._handleExportLayouts();
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('layouts-import-requested', () => {
+                this._handleImportLayouts();
+            })
+        );
+
+        // Layout editor events
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-editor-create', (data) => {
+                this._handleLayoutEditorCreate(data);
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-editor-update', (data) => {
+                this._handleLayoutEditorUpdate(data);
+            })
+        );
+
         this._logger.debug('Event handlers wired');
     }
 
@@ -594,8 +648,8 @@ export class ExtensionController {
         // Get any divider overrides for this layout/monitor
         const overrides = overrideStore.getOverrides(layoutId, monitorIndex);
 
-        // Show snap preview with overrides
-        snapPreviewOverlay.showPreview(monitorIndex, layout, { overrides });
+        // Show snap preview with overrides and window for size validation
+        snapPreviewOverlay.showPreview(monitorIndex, layout, { overrides, window });
 
         this._logger.debug('Snap preview shown', { monitorIndex, layoutId, overrideCount: overrides.length });
     }
@@ -997,6 +1051,118 @@ export class ExtensionController {
     }
 
     /**
+     * Handle layout created
+     * @private
+     * @param {Object} data - {layoutId, layoutDef}
+     */
+    _handleLayoutCreated(data) {
+        this._logger.info('Layout created', { layoutId: data.layoutId });
+        this.saveCustomLayouts();
+    }
+
+    /**
+     * Handle layout updated
+     * @private
+     * @param {Object} data - {layoutId, layoutDef}
+     */
+    _handleLayoutUpdated(data) {
+        this._logger.info('Layout updated', { layoutId: data.layoutId });
+        this.saveCustomLayouts();
+    }
+
+    /**
+     * Handle layout deleted
+     * @private
+     * @param {Object} data - {layoutId}
+     */
+    _handleLayoutDeleted(data) {
+        this._logger.info('Layout deleted', { layoutId: data.layoutId });
+        this.saveCustomLayouts();
+    }
+
+    /**
+     * Handle divider moved
+     * @private
+     * @param {Object} data - {layoutId, monitorIndex, path, ratio}
+     */
+    _handleDividerMoved(data) {
+        this._logger.debug('Divider moved', data);
+        // Save overrides (debounced in real implementation)
+        this.saveDividerOverrides();
+    }
+
+    /**
+     * Handle export layouts request
+     * @private
+     */
+    _handleExportLayouts() {
+        this._logger.info('Export layouts requested');
+        // In a real implementation, this would open a file chooser dialog
+        // For now, just log the export data
+        const layoutManager = this._serviceContainer.get('layoutManager');
+        const json = layoutManager.exportAllCustomLayouts();
+        this._logger.info('Custom layouts JSON', { json });
+
+        // Emit event with data for UI to handle file save
+        this._eventBus.emit('layouts-export-data', { json });
+    }
+
+    /**
+     * Handle import layouts request
+     * @private
+     */
+    _handleImportLayouts() {
+        this._logger.info('Import layouts requested');
+        // In a real implementation, this would open a file chooser dialog
+        // Emit event for UI to handle file selection
+        this._eventBus.emit('layouts-import-dialog-requested', {});
+    }
+
+    /**
+     * Handle layout editor create
+     * @private
+     * @param {Object} data - {layoutId, layoutDef}
+     */
+    _handleLayoutEditorCreate(data) {
+        const { layoutId, layoutDef } = data;
+        const layoutManager = this._serviceContainer.get('layoutManager');
+
+        // Register the new layout
+        const success = layoutManager.registerLayout(layoutId, layoutDef);
+        if (success) {
+            this._logger.info('Layout created via editor', { layoutId });
+            // Emit event for UI updates
+            this._eventBus.emit('layout-created', { layoutId, layoutDef });
+            // Save to GSettings
+            this.saveCustomLayouts();
+        } else {
+            this._logger.error('Failed to create layout', { layoutId });
+        }
+    }
+
+    /**
+     * Handle layout editor update
+     * @private
+     * @param {Object} data - {layoutId, layoutDef}
+     */
+    _handleLayoutEditorUpdate(data) {
+        const { layoutId, layoutDef } = data;
+        const layoutManager = this._serviceContainer.get('layoutManager');
+
+        // Update the layout
+        const success = layoutManager.updateLayout(layoutId, layoutDef);
+        if (success) {
+            this._logger.info('Layout updated via editor', { layoutId });
+            // Emit event for UI updates
+            this._eventBus.emit('layout-updated', { layoutId, layoutDef });
+            // Save to GSettings
+            this.saveCustomLayouts();
+        } else {
+            this._logger.error('Failed to update layout', { layoutId });
+        }
+    }
+
+    /**
      * Handle appearance settings changed
      * @private
      * @param {Object} data
@@ -1086,24 +1252,236 @@ export class ExtensionController {
     }
 
     /**
-     * Load settings (placeholder for GSettings)
+     * Load settings from GSettings
      * @private
      */
     _loadSettings() {
-        // In production, load from GSettings
-        // For now, use defaults
-        this._logger.debug('Settings loaded (defaults)');
+        if (!this._settings) {
+            this._logger.warn('No settings available');
+            return;
+        }
+
+        try {
+            // Load custom layouts
+            this._loadCustomLayouts();
+
+            // Load divider overrides
+            this._loadDividerOverrides();
+
+            // Load layout state (per-monitor layouts)
+            this._loadLayoutState();
+
+            this._logger.info('Settings loaded from GSettings');
+        } catch (error) {
+            this._logger.error('Failed to load settings', { error });
+        }
     }
 
     /**
-     * Save settings (placeholder for GSettings)
+     * Load custom layouts from GSettings
+     * @private
+     */
+    _loadCustomLayouts() {
+        try {
+            const layoutManager = this._serviceContainer.get('layoutManager');
+            const customLayoutsJson = this._settings.get_string('custom-layouts');
+
+            if (!customLayoutsJson || customLayoutsJson === '{}' || customLayoutsJson === '[]') {
+                this._logger.debug('No custom layouts to load');
+                return;
+            }
+
+            // Parse and import layouts
+            const customLayouts = JSON.parse(customLayoutsJson);
+
+            // Support both object and array formats
+            const layoutsArray = Array.isArray(customLayouts)
+                ? customLayouts
+                : Object.values(customLayouts);
+
+            let loadedCount = 0;
+            for (const layoutDef of layoutsArray) {
+                if (layoutDef.id && layoutDef.layout) {
+                    if (layoutManager.registerLayout(layoutDef.id, layoutDef)) {
+                        loadedCount++;
+                    }
+                }
+            }
+
+            this._logger.info(`Loaded ${loadedCount} custom layouts from GSettings`);
+        } catch (error) {
+            this._logger.error('Failed to load custom layouts', { error });
+        }
+    }
+
+    /**
+     * Load divider overrides from GSettings
+     * @private
+     */
+    _loadDividerOverrides() {
+        try {
+            const overrideStore = this._serviceContainer.get('overrideStore');
+            const overridesJson = this._settings.get_string('divider-overrides');
+
+            if (!overridesJson || overridesJson === '{}') {
+                this._logger.debug('No divider overrides to load');
+                return;
+            }
+
+            const success = overrideStore.deserialize(overridesJson);
+            if (success) {
+                this._logger.info(`Loaded divider overrides from GSettings (${overrideStore.size} keys)`);
+            }
+        } catch (error) {
+            this._logger.error('Failed to load divider overrides', { error });
+        }
+    }
+
+    /**
+     * Load layout state from GSettings
+     * @private
+     */
+    _loadLayoutState() {
+        try {
+            const layoutState = this._serviceContainer.get('layoutState');
+            const perMonitorLayoutsJson = this._settings.get_string('per-monitor-layouts');
+
+            if (!perMonitorLayoutsJson || perMonitorLayoutsJson === '{}') {
+                this._logger.debug('No per-monitor layouts to load');
+                return;
+            }
+
+            const perMonitorLayouts = JSON.parse(perMonitorLayoutsJson);
+            for (const [monitorIndexStr, layoutId] of Object.entries(perMonitorLayouts)) {
+                const monitorIndex = parseInt(monitorIndexStr, 10);
+                if (!isNaN(monitorIndex) && typeof layoutId === 'string') {
+                    layoutState.setLayoutForMonitor(monitorIndex, layoutId);
+                }
+            }
+
+            this._logger.info('Loaded per-monitor layouts from GSettings');
+        } catch (error) {
+            this._logger.error('Failed to load layout state', { error });
+        }
+    }
+
+    /**
+     * Save settings to GSettings
      * @private
      * @param {string} category
      * @param {Object} settings
      */
     _saveSettings(category, settings) {
-        // In production, save to GSettings
-        this._logger.debug('Settings saved (placeholder)', { category });
+        if (!this._settings) {
+            this._logger.warn('No settings available');
+            return;
+        }
+
+        try {
+            switch (category) {
+                case 'appearance':
+                    this._saveAppearanceSettings(settings);
+                    break;
+                case 'behavior':
+                    this._saveBehaviorSettings(settings);
+                    break;
+                case 'layout':
+                    this._saveLayoutSettings(settings);
+                    break;
+                default:
+                    this._logger.warn(`Unknown settings category: ${category}`);
+            }
+
+            this._logger.debug('Settings saved to GSettings', { category });
+        } catch (error) {
+            this._logger.error('Failed to save settings', { category, error });
+        }
+    }
+
+    /**
+     * Save appearance settings
+     * @private
+     * @param {Object} settings
+     */
+    _saveAppearanceSettings(settings) {
+        // Save appearance settings to GSettings
+        // This can be expanded as needed
+        this._logger.debug('Appearance settings saved');
+    }
+
+    /**
+     * Save behavior settings
+     * @private
+     * @param {Object} settings
+     */
+    _saveBehaviorSettings(settings) {
+        // Save behavior settings to GSettings
+        if (settings.triggerEdge) {
+            this._settings.set_string('trigger-edge', settings.triggerEdge);
+        }
+        this._logger.debug('Behavior settings saved');
+    }
+
+    /**
+     * Save layout settings
+     * @private
+     * @param {Object} settings
+     */
+    _saveLayoutSettings(settings) {
+        if (settings.defaultLayout) {
+            this._settings.set_string('default-layout', settings.defaultLayout);
+        }
+        if (typeof settings.defaultMargin === 'number') {
+            this._settings.set_int('default-margin', settings.defaultMargin);
+        }
+        if (typeof settings.defaultPadding === 'number') {
+            this._settings.set_int('default-padding', settings.defaultPadding);
+        }
+        if (typeof settings.rememberPerWorkspace === 'boolean') {
+            this._settings.set_boolean('remember-per-workspace', settings.rememberPerWorkspace);
+        }
+        if (settings.perMonitorLayouts) {
+            const json = JSON.stringify(settings.perMonitorLayouts);
+            this._settings.set_string('per-monitor-layouts', json);
+        }
+        this._logger.debug('Layout settings saved');
+    }
+
+    /**
+     * Save custom layouts to GSettings
+     */
+    saveCustomLayouts() {
+        if (!this._settings) {
+            return;
+        }
+
+        try {
+            const layoutManager = this._serviceContainer.get('layoutManager');
+            const customLayouts = layoutManager.getCustomLayouts();
+            const json = JSON.stringify(customLayouts);
+            this._settings.set_string('custom-layouts', json);
+            this._logger.info(`Saved ${customLayouts.length} custom layouts to GSettings`);
+        } catch (error) {
+            this._logger.error('Failed to save custom layouts', { error });
+        }
+    }
+
+    /**
+     * Save divider overrides to GSettings
+     */
+    saveDividerOverrides() {
+        if (!this._settings) {
+            return;
+        }
+
+        try {
+            const overrideStore = this._serviceContainer.get('overrideStore');
+            const json = overrideStore.serialize();
+            this._settings.set_string('divider-overrides', json);
+            this._logger.info('Saved divider overrides to GSettings');
+        } catch (error) {
+            this._logger.error('Failed to save divider overrides', { error });
+        }
     }
 
     /**

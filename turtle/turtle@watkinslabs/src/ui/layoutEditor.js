@@ -47,7 +47,25 @@ export class LayoutEditor {
         this._workArea = null;
         this._selectedZone = null;
         this._originalLayout = null;
+        this._originalLayoutId = null;
         this._isModified = false;
+        this._isClone = false;
+
+        // Layout properties
+        this._layoutName = '';
+        this._layoutId = '';
+        this._layoutDescription = '';
+        this._margin = 0;
+        this._padding = 4;
+
+        // UI references
+        this._nameEntry = null;
+        this._idEntry = null;
+        this._descriptionEntry = null;
+        this._marginSlider = null;
+        this._paddingSlider = null;
+        this._marginValueLabel = null;
+        this._paddingValueLabel = null;
 
         // Signals
         this._signalIds = [];
@@ -114,8 +132,13 @@ export class LayoutEditor {
      */
     _createHeader() {
         const header = new St.BoxLayout({
-            vertical: false,
-            style: 'padding-bottom: 12px;'
+            vertical: true,
+            style: 'padding-bottom: 12px; spacing: 8px;'
+        });
+
+        // Title row
+        const titleRow = new St.BoxLayout({
+            vertical: false
         });
 
         const title = new St.Label({
@@ -127,7 +150,92 @@ export class LayoutEditor {
             `,
             x_expand: true
         });
-        header.add_child(title);
+        titleRow.add_child(title);
+        header.add_child(titleRow);
+
+        // Name input
+        const nameRow = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 8px;'
+        });
+        const nameLabel = new St.Label({
+            text: 'Name:',
+            style: 'color: white; font-size: 12px; min-width: 80px;',
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        nameRow.add_child(nameLabel);
+
+        this._nameEntry = new St.Entry({
+            hint_text: 'My Custom Layout',
+            style: `
+                background-color: rgba(60, 60, 60, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 4px 8px;
+                color: white;
+                min-width: 250px;
+            `,
+            can_focus: true,
+            x_expand: true
+        });
+        nameRow.add_child(this._nameEntry);
+        header.add_child(nameRow);
+
+        // ID input
+        const idRow = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 8px;'
+        });
+        const idLabel = new St.Label({
+            text: 'ID:',
+            style: 'color: white; font-size: 12px; min-width: 80px;',
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        idRow.add_child(idLabel);
+
+        this._idEntry = new St.Entry({
+            hint_text: 'custom-layout-1',
+            style: `
+                background-color: rgba(60, 60, 60, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 4px 8px;
+                color: white;
+                min-width: 250px;
+            `,
+            can_focus: true,
+            x_expand: true
+        });
+        idRow.add_child(this._idEntry);
+        header.add_child(idRow);
+
+        // Description input
+        const descRow = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 8px;'
+        });
+        const descLabel = new St.Label({
+            text: 'Description:',
+            style: 'color: white; font-size: 12px; min-width: 80px;',
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        descRow.add_child(descLabel);
+
+        this._descriptionEntry = new St.Entry({
+            hint_text: 'A custom layout for my workflow',
+            style: `
+                background-color: rgba(60, 60, 60, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 4px 8px;
+                color: white;
+                min-width: 250px;
+            `,
+            can_focus: true,
+            x_expand: true
+        });
+        descRow.add_child(this._descriptionEntry);
+        header.add_child(descRow);
 
         return header;
     }
@@ -261,7 +369,126 @@ export class LayoutEditor {
             controls.add_child(button);
         }
 
+        // Spacing section
+        const spacingLabel = new St.Label({
+            text: 'Spacing:',
+            style: `
+                color: rgba(255, 255, 255, 0.8);
+                font-size: 12px;
+                padding-top: 12px;
+            `
+        });
+        controls.add_child(spacingLabel);
+
+        // Margin control
+        this._createSliderControl(controls, 'Margin', 0, 20, this._margin, (value) => {
+            this._margin = value;
+            this._isModified = true;
+            this._renderPreview();
+        });
+
+        // Padding control
+        this._createSliderControl(controls, 'Padding', 0, 20, this._padding, (value) => {
+            this._padding = value;
+            this._isModified = true;
+            this._renderPreview();
+        });
+
         return controls;
+    }
+
+    /**
+     * Create slider control
+     * @private
+     * @param {St.BoxLayout} parent
+     * @param {string} label
+     * @param {number} min
+     * @param {number} max
+     * @param {number} defaultValue
+     * @param {Function} callback
+     */
+    _createSliderControl(parent, label, min, max, defaultValue, callback) {
+        const row = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 8px; padding: 4px 0;'
+        });
+
+        const labelWidget = new St.Label({
+            text: label + ':',
+            style: `
+                color: rgba(255, 255, 255, 0.9);
+                font-size: 12px;
+                min-width: 60px;
+            `,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        row.add_child(labelWidget);
+
+        // Value label
+        const valueLabel = new St.Label({
+            text: `${defaultValue}px`,
+            style: `
+                color: rgba(255, 255, 255, 0.8);
+                font-size: 12px;
+                min-width: 40px;
+                text-align: right;
+            `,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+
+        // Slider buttons (simplified - increment/decrement)
+        const decrementButton = new St.Button({
+            label: '-',
+            style: `
+                background-color: rgba(60, 60, 60, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 2px 8px;
+                color: white;
+                font-size: 14px;
+                min-width: 30px;
+            `,
+            reactive: true
+        });
+
+        let currentValue = defaultValue;
+        const decId = decrementButton.connect('clicked', () => {
+            if (currentValue > min) {
+                currentValue--;
+                valueLabel.set_text(`${currentValue}px`);
+                callback(currentValue);
+            }
+        });
+        this._signalIds.push({ actor: decrementButton, id: decId });
+        row.add_child(decrementButton);
+
+        row.add_child(valueLabel);
+
+        const incrementButton = new St.Button({
+            label: '+',
+            style: `
+                background-color: rgba(60, 60, 60, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 2px 8px;
+                color: white;
+                font-size: 14px;
+                min-width: 30px;
+            `,
+            reactive: true
+        });
+
+        const incId = incrementButton.connect('clicked', () => {
+            if (currentValue < max) {
+                currentValue++;
+                valueLabel.set_text(`${currentValue}px`);
+                callback(currentValue);
+            }
+        });
+        this._signalIds.push({ actor: incrementButton, id: incId });
+        row.add_child(incrementButton);
+
+        parent.add_child(row);
     }
 
     /**
@@ -319,14 +546,32 @@ export class LayoutEditor {
     /**
      * Show layout editor
      *
-     * @param {Object} layout - Layout to edit (or null for new)
-     * @param {Object} workArea - Work area dimensions
+     * @param {Object} options - Options for the editor
+     * @param {Object} options.layout - Layout definition (or null for new)
+     * @param {string} options.layoutId - Layout ID (for editing existing)
+     * @param {string} options.name - Layout name
+     * @param {string} options.description - Layout description
+     * @param {number} options.margin - Layout margin
+     * @param {number} options.padding - Layout padding
+     * @param {boolean} options.isClone - Whether this is a clone operation
+     * @param {Object} options.workArea - Work area dimensions
      */
-    show(layout = null, workArea = null) {
+    show(options = {}) {
         if (!this._container) {
             this._logger.warn('Not initialized');
             return;
         }
+
+        const {
+            layout = null,
+            layoutId = null,
+            name = '',
+            description = '',
+            margin = 0,
+            padding = 4,
+            isClone = false,
+            workArea = null
+        } = options;
 
         // Store work area
         this._workArea = workArea || {
@@ -339,14 +584,34 @@ export class LayoutEditor {
         // Load layout
         if (layout) {
             this._originalLayout = layout;
+            this._originalLayoutId = isClone ? null : layoutId;
             this._layoutTree = LayoutTree.fromDefinition(layout);
+            this._isClone = isClone;
         } else {
             // Create default 2x2 layout
             this._originalLayout = null;
+            this._originalLayoutId = null;
             this._layoutTree = LayoutTree.createGrid(2, 2);
+            this._isClone = false;
         }
 
+        // Set layout properties
+        this._layoutName = isClone ? `${name} (Copy)` : name;
+        this._layoutId = isClone ? '' : (layoutId || '');
+        this._layoutDescription = description;
+        this._margin = margin;
+        this._padding = padding;
         this._isModified = false;
+
+        // Update UI fields
+        this._nameEntry.set_text(this._layoutName);
+        this._idEntry.set_text(this._layoutId);
+        this._descriptionEntry.set_text(this._layoutDescription);
+
+        // If cloning, focus on ID field since user needs to provide new ID
+        if (isClone) {
+            this._idEntry.grab_key_focus();
+        }
 
         // Render preview
         this._renderPreview();
@@ -367,7 +632,11 @@ export class LayoutEditor {
             mode: Clutter.AnimationMode.EASE_OUT_QUAD
         });
 
-        this._logger.debug('Layout editor shown');
+        this._logger.debug('Layout editor shown', {
+            layoutId,
+            isClone,
+            isNew: !layoutId && !isClone
+        });
     }
 
     /**
@@ -404,11 +673,11 @@ export class LayoutEditor {
         }
 
         try {
-            // Resolve layout to zones
+            // Resolve layout to zones with current margin/padding
             const layout = this._layoutTree.toDefinition();
             const zones = this._layoutResolver.resolve(layout, this._workArea, {
-                margin: 0,
-                padding: 2
+                margin: this._margin,
+                padding: this._padding
             });
 
             // Render zones
@@ -561,12 +830,63 @@ export class LayoutEditor {
             return;
         }
 
+        // Get values from UI
+        const name = this._nameEntry.get_text().trim();
+        const id = this._idEntry.get_text().trim();
+        const description = this._descriptionEntry.get_text().trim();
+
+        // Validate
+        if (!name) {
+            this._logger.warn('Layout name is required');
+            // In a real implementation, show error message to user
+            return;
+        }
+
+        if (!id) {
+            this._logger.warn('Layout ID is required');
+            return;
+        }
+
+        // Validate ID format (lowercase, hyphens, no spaces)
+        if (!/^[a-z0-9-]+$/.test(id)) {
+            this._logger.warn('Layout ID must contain only lowercase letters, numbers, and hyphens');
+            return;
+        }
+
+        // Check if ID is already taken (unless updating the same layout)
+        if (this._originalLayoutId !== id && this._layoutManager.hasLayout(id)) {
+            this._logger.warn(`Layout ID '${id}' already exists`);
+            return;
+        }
+
+        // Get layout definition
         const layout = this._layoutTree.toDefinition();
 
-        this._logger.debug('Layout saved');
+        // Create layout definition object
+        const layoutDef = {
+            id,
+            name,
+            description,
+            layout,
+            builtin: false,
+            margin: this._margin,
+            padding: this._padding
+        };
 
-        // Emit event
-        this._eventBus.emit('layout-editor-save', { layout });
+        // Determine operation
+        const isUpdate = this._originalLayoutId && this._originalLayoutId === id;
+        const isNew = !this._originalLayoutId;
+
+        this._logger.info('Saving layout', { id, isUpdate, isNew, isClone: this._isClone });
+
+        // Emit appropriate event
+        if (isUpdate) {
+            // Update existing layout
+            this._eventBus.emit('layout-editor-update', { layoutId: id, layoutDef });
+        } else {
+            // Create new layout (either brand new or cloned)
+            this._eventBus.emit('layout-editor-create', { layoutId: id, layoutDef });
+        }
 
         this.hide();
     }

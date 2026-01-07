@@ -13,6 +13,8 @@
 
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -33,10 +35,12 @@ export class LayoutPreferences {
         this._monitorManager = monitorManager;
         this._eventBus = eventBus;
         this._logger = new Logger('LayoutPreferences');
+        this._layoutEditor = null; // Will be set later
 
         // UI components
         this._container = null;
         this._monitorListBox = null;
+        this._customLayoutsListBox = null;
         this._monitorItems = [];
 
         // Settings (will be synced with GSettings)
@@ -53,6 +57,7 @@ export class LayoutPreferences {
 
         // Signals
         this._signalIds = [];
+        this._eventSubscriptions = [];
     }
 
     /**
@@ -101,6 +106,7 @@ export class LayoutPreferences {
         // Add settings sections
         this._createDefaultSettings(settingsBox);
         this._createMonitorSettings(settingsBox);
+        this._createCustomLayoutsSettings(settingsBox);
         this._createAdvancedSettings(settingsBox);
 
         scrollView.add_child(settingsBox);
@@ -113,7 +119,34 @@ export class LayoutPreferences {
         // Add to parent
         parent.add_child(this._container);
 
+        // Subscribe to layout change events
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-created', () => {
+                this._populateCustomLayouts();
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-updated', () => {
+                this._populateCustomLayouts();
+            })
+        );
+
+        this._eventSubscriptions.push(
+            this._eventBus.on('layout-deleted', () => {
+                this._populateCustomLayouts();
+            })
+        );
+
         this._logger.info('LayoutPreferences initialized');
+    }
+
+    /**
+     * Set layout editor reference
+     * @param {LayoutEditor} layoutEditor
+     */
+    setLayoutEditor(layoutEditor) {
+        this._layoutEditor = layoutEditor;
     }
 
     /**
@@ -189,6 +222,301 @@ export class LayoutPreferences {
 
         // Populate monitors
         this._populateMonitors();
+    }
+
+    /**
+     * Create custom layouts settings section
+     * @private
+     * @param {St.BoxLayout} parent
+     */
+    _createCustomLayoutsSettings(parent) {
+        const section = this._createSection('Custom Layouts');
+        parent.add_child(section);
+
+        // Info text
+        const infoLabel = new St.Label({
+            text: 'Create, edit, and manage your custom layouts',
+            style: `
+                color: rgba(255, 255, 255, 0.7);
+                font-size: 12px;
+                padding-bottom: 8px;
+            `
+        });
+        section.add_child(infoLabel);
+
+        // Create New Layout button
+        const createButton = new St.Button({
+            label: '+ Create New Layout',
+            style: `
+                background-color: rgba(50, 150, 50, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
+                padding: 8px 16px;
+                color: white;
+                font-size: 12px;
+                margin-bottom: 8px;
+            `
+        });
+        const createId = createButton.connect('clicked', () => {
+            this._createNewLayout();
+        });
+        this._signalIds.push({ actor: createButton, id: createId });
+        section.add_child(createButton);
+
+        // Custom layouts list container
+        this._customLayoutsListBox = new St.BoxLayout({
+            vertical: true,
+            style: 'spacing: 6px;'
+        });
+        section.add_child(this._customLayoutsListBox);
+
+        // Populate custom layouts
+        this._populateCustomLayouts();
+    }
+
+    /**
+     * Populate custom layouts list
+     * @private
+     */
+    _populateCustomLayouts() {
+        // Clear existing
+        this._customLayoutsListBox.remove_all_children();
+
+        // Get custom layouts
+        const customLayouts = this._layoutManager.getCustomLayouts();
+
+        if (customLayouts.length === 0) {
+            const emptyLabel = new St.Label({
+                text: 'No custom layouts yet',
+                style: `
+                    color: rgba(255, 255, 255, 0.5);
+                    font-size: 12px;
+                    font-style: italic;
+                    padding: 8px;
+                `
+            });
+            this._customLayoutsListBox.add_child(emptyLabel);
+            return;
+        }
+
+        // Add each custom layout
+        for (const layout of customLayouts) {
+            const layoutRow = this._createLayoutRow(layout);
+            this._customLayoutsListBox.add_child(layoutRow);
+        }
+    }
+
+    /**
+     * Create layout row
+     * @private
+     * @param {Object} layout
+     * @returns {St.BoxLayout}
+     */
+    _createLayoutRow(layout) {
+        const row = new St.BoxLayout({
+            vertical: false,
+            style: `
+                background-color: rgba(50, 50, 50, 0.6);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                padding: 8px;
+                spacing: 8px;
+            `
+        });
+
+        // Layout info
+        const infoBox = new St.BoxLayout({
+            vertical: true,
+            x_expand: true
+        });
+
+        const nameLabel = new St.Label({
+            text: layout.name,
+            style: `
+                color: white;
+                font-size: 13px;
+                font-weight: bold;
+            `
+        });
+        infoBox.add_child(nameLabel);
+
+        if (layout.description) {
+            const descLabel = new St.Label({
+                text: layout.description,
+                style: `
+                    color: rgba(255, 255, 255, 0.7);
+                    font-size: 11px;
+                `
+            });
+            infoBox.add_child(descLabel);
+        }
+
+        const idLabel = new St.Label({
+            text: `ID: ${layout.id}`,
+            style: `
+                color: rgba(255, 255, 255, 0.5);
+                font-size: 10px;
+            `
+        });
+        infoBox.add_child(idLabel);
+
+        row.add_child(infoBox);
+
+        // Action buttons
+        const buttonsBox = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 4px;'
+        });
+
+        // Edit button
+        const editButton = new St.Button({
+            label: 'Edit',
+            style: `
+                background-color: rgba(60, 120, 180, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 4px 10px;
+                color: white;
+                font-size: 11px;
+            `
+        });
+        const editId = editButton.connect('clicked', () => {
+            this._editLayout(layout);
+        });
+        this._signalIds.push({ actor: editButton, id: editId });
+        buttonsBox.add_child(editButton);
+
+        // Clone button
+        const cloneButton = new St.Button({
+            label: 'Clone',
+            style: `
+                background-color: rgba(120, 80, 180, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 4px 10px;
+                color: white;
+                font-size: 11px;
+            `
+        });
+        const cloneId = cloneButton.connect('clicked', () => {
+            this._cloneLayout(layout);
+        });
+        this._signalIds.push({ actor: cloneButton, id: cloneId });
+        buttonsBox.add_child(cloneButton);
+
+        // Delete button
+        const deleteButton = new St.Button({
+            label: 'Delete',
+            style: `
+                background-color: rgba(180, 50, 50, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+                padding: 4px 10px;
+                color: white;
+                font-size: 11px;
+            `
+        });
+        const deleteId = deleteButton.connect('clicked', () => {
+            this._deleteLayout(layout);
+        });
+        this._signalIds.push({ actor: deleteButton, id: deleteId });
+        buttonsBox.add_child(deleteButton);
+
+        row.add_child(buttonsBox);
+
+        return row;
+    }
+
+    /**
+     * Create new layout
+     * @private
+     */
+    _createNewLayout() {
+        this._logger.info('Creating new layout');
+        const layoutEditor = this._getLayoutEditor();
+        if (layoutEditor) {
+            layoutEditor.show({
+                layout: null,
+                layoutId: null,
+                name: '',
+                description: '',
+                margin: 0,
+                padding: 4,
+                isClone: false
+            });
+        }
+    }
+
+    /**
+     * Edit layout
+     * @private
+     * @param {Object} layout
+     */
+    _editLayout(layout) {
+        this._logger.info('Editing layout', { id: layout.id });
+        const layoutEditor = this._getLayoutEditor();
+        if (layoutEditor) {
+            layoutEditor.show({
+                layout: layout.layout,
+                layoutId: layout.id,
+                name: layout.name,
+                description: layout.description || '',
+                margin: layout.margin || 0,
+                padding: layout.padding || 4,
+                isClone: false
+            });
+        }
+    }
+
+    /**
+     * Clone layout
+     * @private
+     * @param {Object} layout
+     */
+    _cloneLayout(layout) {
+        this._logger.info('Cloning layout', { id: layout.id });
+        const layoutEditor = this._getLayoutEditor();
+        if (layoutEditor) {
+            layoutEditor.show({
+                layout: layout.layout,
+                layoutId: null,
+                name: layout.name,
+                description: layout.description || '',
+                margin: layout.margin || 0,
+                padding: layout.padding || 4,
+                isClone: true
+            });
+        }
+    }
+
+    /**
+     * Delete layout
+     * @private
+     * @param {Object} layout
+     */
+    _deleteLayout(layout) {
+        this._logger.info('Deleting layout', { id: layout.id });
+
+        // Delete from layout manager
+        const success = this._layoutManager.deleteLayout(layout.id);
+        if (success) {
+            // Emit event
+            this._eventBus.emit('layout-deleted', { layoutId: layout.id });
+
+            // Refresh list
+            this._populateCustomLayouts();
+        } else {
+            this._logger.error('Failed to delete layout', { id: layout.id });
+        }
+    }
+
+    /**
+     * Get layout editor instance
+     * @private
+     * @returns {LayoutEditor|null}
+     */
+    _getLayoutEditor() {
+        return this._layoutEditor;
     }
 
     /**
@@ -627,8 +955,45 @@ export class LayoutPreferences {
      */
     _exportLayouts() {
         this._logger.info('Exporting layouts');
-        // In real implementation, export to file
-        this._eventBus.emit('layouts-export-requested', {});
+
+        try {
+            // Get custom layouts JSON
+            const json = this._layoutManager.exportAllCustomLayouts();
+
+            // Get export directory
+            const homeDir = GLib.get_home_dir();
+            const exportDir = GLib.build_filenamev([homeDir, '.local', 'share', 'turtle-layouts']);
+
+            // Create directory if it doesn't exist
+            const dir = Gio.File.new_for_path(exportDir);
+            if (!dir.query_exists(null)) {
+                dir.make_directory_with_parents(null);
+            }
+
+            // Generate filename with timestamp
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+            const filename = `turtle-layouts-${timestamp}.json`;
+            const filePath = GLib.build_filenamev([exportDir, filename]);
+
+            // Write file
+            const file = Gio.File.new_for_path(filePath);
+            file.replace_contents(
+                json,
+                null,
+                false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION,
+                null
+            );
+
+            this._logger.info('Layouts exported successfully', { filePath });
+
+            // Show success message with file path
+            this._showMessage(`Layouts exported to:\n${filePath}`, 'success');
+
+        } catch (error) {
+            this._logger.error('Failed to export layouts', { error });
+            this._showMessage('Failed to export layouts:\n' + error.message, 'error');
+        }
     }
 
     /**
@@ -637,8 +1002,231 @@ export class LayoutPreferences {
      */
     _importLayouts() {
         this._logger.info('Importing layouts');
-        // In real implementation, import from file
-        this._eventBus.emit('layouts-import-requested', {});
+
+        // Show import dialog with text entry
+        this._showImportDialog();
+    }
+
+    /**
+     * Show import dialog
+     * @private
+     */
+    _showImportDialog() {
+        const dialog = new St.BoxLayout({
+            style: `
+                background-color: rgba(30, 30, 30, 0.98);
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 8px;
+                padding: 20px;
+                min-width: 500px;
+            `,
+            vertical: true,
+            reactive: true
+        });
+
+        // Title
+        const title = new St.Label({
+            text: 'Import Layouts',
+            style: `
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+                padding-bottom: 12px;
+            `
+        });
+        dialog.add_child(title);
+
+        // Instructions
+        const instructions = new St.Label({
+            text: 'Paste JSON layout data or file path below:',
+            style: `
+                color: rgba(255, 255, 255, 0.8);
+                font-size: 12px;
+                padding-bottom: 8px;
+            `
+        });
+        dialog.add_child(instructions);
+
+        // Text entry (multiline)
+        const scrollView = new St.ScrollView({
+            style: `
+                background-color: rgba(60, 60, 60, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
+                min-height: 200px;
+                max-height: 300px;
+                margin-bottom: 12px;
+            `,
+            hscrollbar_policy: St.PolicyType.AUTOMATIC,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC
+        });
+
+        const textEntry = new St.Entry({
+            hint_text: 'Paste JSON or file path here...',
+            style: `
+                color: white;
+                padding: 8px;
+                min-width: 460px;
+                min-height: 180px;
+            `,
+            can_focus: true
+        });
+        scrollView.add_child(textEntry);
+        dialog.add_child(scrollView);
+
+        // Buttons
+        const buttonsBox = new St.BoxLayout({
+            style: 'spacing: 8px;'
+        });
+
+        const importButton = new St.Button({
+            label: 'Import',
+            style: `
+                background-color: rgba(50, 150, 50, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
+                padding: 8px 16px;
+                color: white;
+            `,
+            x_expand: true
+        });
+        importButton.connect('clicked', () => {
+            this._processImport(textEntry.get_text());
+            dialog.destroy();
+        });
+        buttonsBox.add_child(importButton);
+
+        const cancelButton = new St.Button({
+            label: 'Cancel',
+            style: `
+                background-color: rgba(150, 50, 50, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 4px;
+                padding: 8px 16px;
+                color: white;
+            `
+        });
+        cancelButton.connect('clicked', () => {
+            dialog.destroy();
+        });
+        buttonsBox.add_child(cancelButton);
+
+        dialog.add_child(buttonsBox);
+
+        // Add to UI
+        Main.uiGroup.add_child(dialog);
+
+        // Position in center
+        const monitor = Main.layoutManager.primaryMonitor;
+        dialog.set_position(
+            monitor.x + (monitor.width - dialog.width) / 2,
+            monitor.y + (monitor.height - dialog.height) / 2
+        );
+    }
+
+    /**
+     * Process import data
+     * @private
+     * @param {string} input
+     */
+    _processImport(input) {
+        if (!input || input.trim() === '') {
+            this._showMessage('No data provided', 'error');
+            return;
+        }
+
+        try {
+            let json = input.trim();
+
+            // Check if input is a file path
+            if (json.startsWith('/') || json.startsWith('~')) {
+                // Expand ~ to home directory
+                if (json.startsWith('~')) {
+                    const homeDir = GLib.get_home_dir();
+                    json = homeDir + json.substring(1);
+                }
+
+                // Read file
+                const file = Gio.File.new_for_path(json);
+                if (!file.query_exists(null)) {
+                    this._showMessage('File not found: ' + json, 'error');
+                    return;
+                }
+
+                const [success, contents] = file.load_contents(null);
+                if (!success) {
+                    this._showMessage('Failed to read file', 'error');
+                    return;
+                }
+
+                json = new TextDecoder().decode(contents);
+            }
+
+            // Import layouts
+            const count = this._layoutManager.importMultipleLayouts(json);
+
+            if (count > 0) {
+                this._logger.info(`Imported ${count} layouts`);
+                this._showMessage(`Successfully imported ${count} layout(s)`, 'success');
+
+                // Emit event to save to GSettings
+                this._eventBus.emit('layouts-import-requested', {});
+
+                // Refresh UI
+                this._populateCustomLayouts();
+            } else {
+                this._showMessage('No layouts were imported. Check the JSON format.', 'error');
+            }
+
+        } catch (error) {
+            this._logger.error('Failed to import layouts', { error });
+            this._showMessage('Import failed: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Show message to user
+     * @private
+     * @param {string} message
+     * @param {string} type - 'success' or 'error'
+     */
+    _showMessage(message, type) {
+        const messageBox = new St.BoxLayout({
+            style: `
+                background-color: ${type === 'success' ? 'rgba(50, 150, 50, 0.95)' : 'rgba(150, 50, 50, 0.95)'};
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 6px;
+                padding: 16px;
+                max-width: 500px;
+            `,
+            vertical: true,
+            reactive: true
+        });
+
+        const label = new St.Label({
+            text: message,
+            style: `
+                color: white;
+                font-size: 13px;
+            `
+        });
+        messageBox.add_child(label);
+
+        // Add to UI
+        Main.uiGroup.add_child(messageBox);
+
+        // Position in center
+        const monitor = Main.layoutManager.primaryMonitor;
+        messageBox.set_position(
+            monitor.x + (monitor.width - messageBox.width) / 2,
+            monitor.y + (monitor.height - messageBox.height) / 2
+        );
+
+        // Auto-dismiss after 3 seconds
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+            messageBox.destroy();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     /**
@@ -769,6 +1357,12 @@ export class LayoutPreferences {
             }
         }
         this._signalIds = [];
+
+        // Unsubscribe from event bus
+        for (const unsubscribe of this._eventSubscriptions) {
+            unsubscribe();
+        }
+        this._eventSubscriptions = [];
 
         if (this._container) {
             this._container.destroy();
