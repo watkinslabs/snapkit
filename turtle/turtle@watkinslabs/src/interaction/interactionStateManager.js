@@ -54,6 +54,7 @@ export class InteractionStateManager {
         this._enabled = false;
         this._currentMonitor = null;
         this._triggerZone = null;
+        this._dragCancelled = false;
     }
 
     /**
@@ -106,6 +107,12 @@ export class InteractionStateManager {
         this._subscriptions.push(
             this._eventBus.on('window-drag-move', (data) => {
                 this._onWindowDragMove(data);
+            })
+        );
+
+        this._subscriptions.push(
+            this._eventBus.on('window-drag-shake', (data) => {
+                this._onWindowDragShake(data);
             })
         );
 
@@ -206,6 +213,7 @@ export class InteractionStateManager {
             position
         });
 
+        this._dragCancelled = false;
         // Determine monitor
         const rect = window.get_frame_rect();
         const centerX = rect.x + rect.width / 2;
@@ -233,6 +241,10 @@ export class InteractionStateManager {
     _onWindowDragMove(data) {
         const { window, position } = data;
 
+        if (this._dragCancelled) {
+            return;
+        }
+
         // Update snap preview based on cursor position
         this._eventBus.emit('update-snap-preview', {
             window,
@@ -253,12 +265,47 @@ export class InteractionStateManager {
             position
         });
 
+        if (this._dragCancelled) {
+            this._dragCancelled = false;
+            this._eventBus.emit('cancel-snap-preview', { reason: 'shake' });
+            return;
+        }
+
         // Request snap to zone (if applicable)
         this._eventBus.emit('request-snap-to-zone', {
             window,
             position,
             monitorIndex: this._currentMonitor
         });
+    }
+
+    /**
+     * Handle shake gesture during drag to exit snap mode
+     * @private
+     * @param {Object} data
+     */
+    _onWindowDragShake(data) {
+        if (this._dragCancelled) {
+            return;
+        }
+
+        this._dragCancelled = true;
+
+        // Close snap preview and return to normal drag
+        this._eventBus.emit('cancel-snap-preview', {
+            reason: 'shake',
+            position: data.position
+        });
+
+        if (this._extensionState.current !== State.CLOSED && this._extensionState.canTransitionTo(State.CLOSED)) {
+            try {
+                this._extensionState.transitionTo(State.CLOSED);
+            } catch (error) {
+                this._logger.warn('Failed to transition to CLOSED after shake gesture', { error });
+            }
+        }
+
+        this._logger.info('Shake detected, snap mode cancelled');
     }
 
     /**

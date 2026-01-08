@@ -457,6 +457,12 @@ export class ExtensionController {
             })
         );
 
+        this._eventSubscriptions.push(
+            this._eventBus.on('cancel-snap-preview', (data) => {
+                this._handleCancelSnapPreview(data);
+            })
+        );
+
         // Zone selection from overlay
         this._eventSubscriptions.push(
             this._eventBus.on('zone-selected', (data) => {
@@ -708,10 +714,38 @@ export class ExtensionController {
         // Snap window to zone with overrides
         snapHandler.snapToZone(window, monitorIndex, layoutId, zoneIndex, layout, { overrides });
 
+        // Remember layout for this monitor
+        layoutState.setLayoutForMonitor(monitorIndex, layoutId);
+        this._saveLayoutState();
+
         // Hide preview
         snapPreviewOverlay.hide();
 
         this._logger.debug('Window snapped via drag', { zoneIndex, monitorIndex, layoutId });
+    }
+
+    /**
+     * Handle snap preview cancellation (e.g., shake gesture)
+     * @private
+     * @param {Object} data
+     */
+    _handleCancelSnapPreview(data) {
+        const snapPreviewOverlay = this._serviceContainer.get('snapPreviewOverlay');
+        const extensionState = this._serviceContainer.get('extensionState');
+
+        // Hide any active preview
+        snapPreviewOverlay.hide();
+
+        // Transition back to CLOSED if possible
+        if (extensionState.current !== State.CLOSED && extensionState.canTransitionTo(State.CLOSED)) {
+            try {
+                extensionState.transitionTo(State.CLOSED);
+            } catch (error) {
+                this._logger.warn('Failed to transition to CLOSED after snap cancel', { error });
+            }
+        }
+
+        this._logger.info('Snap preview cancelled', { reason: data?.reason || 'unknown' });
     }
 
     /**
@@ -909,6 +943,9 @@ export class ExtensionController {
 
         // Also log to console for debugging
         console.log(`SnapKit DEBUG: Layout ${layoutId} set for monitor ${monitorIndex} (verified: ${verifyLayoutId})`);
+
+        // Persist per-monitor layout selection
+        this._saveLayoutState();
     }
 
     /**
@@ -924,6 +961,7 @@ export class ExtensionController {
 
         // Update layout state
         layoutState.setLayoutForMonitor(monitorIndex, layoutId);
+        this._saveLayoutState();
 
         // Get layout
         const layout = layoutManager.getLayout(layoutId);
@@ -977,6 +1015,7 @@ export class ExtensionController {
 
         // Update layout state
         layoutState.setLayoutForMonitor(monitorIndex, layoutId);
+        this._saveLayoutState();
 
         this._logger.info('Window snapped via keyboard', {
             layoutId,
@@ -1036,6 +1075,7 @@ export class ExtensionController {
 
         // Update layout state
         layoutState.setLayoutForMonitor(monitorIndex, nextLayoutId);
+        this._saveLayoutState();
 
         // Get overrides for new layout
         const overrides = overrideStore.getOverrides(nextLayoutId, monitorIndex);
@@ -1089,6 +1129,7 @@ export class ExtensionController {
         this._logger.debug('Divider moved', data);
         // Save overrides (debounced in real implementation)
         this.saveDividerOverrides();
+        this._saveLayoutState();
     }
 
     /**
@@ -1201,6 +1242,7 @@ export class ExtensionController {
         const mouseHandler = this._serviceContainer.get('mouseHandler');
         const keyboardHandler = this._serviceContainer.get('keyboardHandler');
         const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
+        const dragDetector = this._serviceContainer.get('dragDetector');
 
         // Apply trigger zone settings
         mouseHandler.updateConfig({
@@ -1226,6 +1268,14 @@ export class ExtensionController {
             navigateRight: settings.navigateRight,
             selectZone: settings.selectZone,
             cancel: settings.cancel
+        });
+
+        // Apply shake-to-exit configuration
+        dragDetector.updateConfig({
+            shakeEnabled: settings.shakeEnabled,
+            shakeWindowMs: settings.shakeWindowMs,
+            shakeMinDelta: settings.shakeMinDelta,
+            shakeDirectionChanges: settings.shakeDirectionChanges
         });
 
         this._logger.info('Behavior settings applied', settings);
@@ -1395,6 +1445,30 @@ export class ExtensionController {
             this._logger.debug('Settings saved to GSettings', { category });
         } catch (error) {
             this._logger.error('Failed to save settings', { category, error });
+        }
+    }
+
+    /**
+     * Save per-monitor layout selections to GSettings
+     * @private
+     */
+    _saveLayoutState() {
+        if (!this._settings) {
+            return;
+        }
+
+        try {
+            const layoutState = this._serviceContainer.get('layoutState');
+            const layouts = layoutState.getAllLayouts();
+            const obj = {};
+            for (const [monitorIndex, layoutId] of layouts.entries()) {
+                obj[monitorIndex] = layoutId;
+            }
+
+            this._settings.set_string('per-monitor-layouts', JSON.stringify(obj));
+            this._logger.debug('Saved per-monitor layouts', { count: layouts.size });
+        } catch (error) {
+            this._logger.error('Failed to save layout state', { error });
         }
     }
 

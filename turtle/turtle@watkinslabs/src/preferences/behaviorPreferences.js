@@ -56,7 +56,13 @@ export class BehaviorPreferences {
             // Behavior
             autoSnapOnDrag: true,
             focusWindowOnSnap: true,
-            restoreOnUnsnap: true
+            restoreOnUnsnap: true,
+
+            // Shake-to-exit snap
+            shakeEnabled: true,
+            shakeWindowMs: 500,
+            shakeMinDelta: 35,
+            shakeDirectionChanges: 4
         };
 
         // Original settings (for reset)
@@ -113,6 +119,7 @@ export class BehaviorPreferences {
         this._createTriggerZoneSettings(settingsBox);
         this._createKeyboardSettings(settingsBox);
         this._createBehaviorSettings(settingsBox);
+        this._createShakeSettings(settingsBox);
 
         scrollView.add_child(settingsBox);
         this._container.add_child(scrollView);
@@ -213,6 +220,21 @@ export class BehaviorPreferences {
 
         // Restore on unsnap
         this._createToggleRow(section, 'Restore Size on Unsnap', 'restoreOnUnsnap', this._settings.restoreOnUnsnap);
+    }
+
+    /**
+     * Create shake-to-exit settings section
+     * @private
+     * @param {St.BoxLayout} parent
+     */
+    _createShakeSettings(parent) {
+        const section = this._createSection('Shake to Exit Snap');
+        parent.add_child(section);
+
+        this._createToggleRow(section, 'Enable Shake to Exit', 'shakeEnabled', this._settings.shakeEnabled);
+        this._createSliderRow(section, 'Shake Window (ms)', 'shakeWindowMs', 100, 2000, this._settings.shakeWindowMs, (value) => `${value} ms`);
+        this._createSliderRow(section, 'Minimum Distance (px)', 'shakeMinDelta', 5, 150, this._settings.shakeMinDelta, (value) => `${value} px`);
+        this._createSliderRow(section, 'Direction Changes', 'shakeDirectionChanges', 1, 10, this._settings.shakeDirectionChanges, (value) => `${value}`);
     }
 
     /**

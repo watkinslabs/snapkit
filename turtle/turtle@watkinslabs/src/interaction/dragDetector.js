@@ -41,6 +41,16 @@ export class DragDetector {
         this._isDragging = false;
         this._draggedWindow = null;
         this._dragStartTime = 0;
+
+        // Shake detection (to exit snap mode)
+        this._shakeDetected = false;
+        this._shakeConfig = {
+            enabled: true,
+            windowMs: 500,
+            minDelta: 35,
+            directionChanges: 4
+        };
+        this._shakeState = this._createEmptyShakeState();
     }
 
     /**
@@ -100,6 +110,7 @@ export class DragDetector {
             this._isDragging = true;
             this._draggedWindow = window;
             this._dragStartTime = Date.now();
+            this._resetShakeDetection();
 
             // Get window position
             const rect = window.get_frame_rect();
@@ -176,6 +187,7 @@ export class DragDetector {
 
             // End drag state
             this._dragState.endDrag();
+            this._resetShakeDetection();
 
             // Transition back to CLOSED (if still in DRAG_MODE)
             if (this._extensionState.current === State.DRAG_MODE) {
@@ -251,6 +263,17 @@ export class DragDetector {
             // Update drag state with pointer position
             this._dragState.updatePosition(position);
 
+            // Detect shake gesture to cancel snap mode
+            if (!this._shakeDetected && this._shakeConfig.enabled && this._detectShake(position.x)) {
+                this._shakeDetected = true;
+                this._logger.info('Shake gesture detected, cancelling snap mode', { position });
+                this._eventBus.emit('window-drag-shake', {
+                    window,
+                    position,
+                    timestamp: Date.now()
+                });
+            }
+
             // Emit event
             this._eventBus.emit('window-drag-move', {
                 window,
@@ -299,6 +322,71 @@ export class DragDetector {
     }
 
     /**
+     * Create empty shake detection state
+     * @private
+     * @returns {Object}
+     */
+    _createEmptyShakeState() {
+        return {
+            startTime: 0,
+            lastX: null,
+            lastDirection: null,
+            directionChanges: 0
+        };
+    }
+
+    /**
+     * Reset shake detection state
+     * @private
+     */
+    _resetShakeDetection() {
+        this._shakeDetected = false;
+        this._shakeState = this._createEmptyShakeState();
+    }
+
+    /**
+     * Detect rapid left-right shake movements within a time window
+     * @private
+     * @param {number} x
+     * @returns {boolean}
+     */
+    _detectShake(x) {
+        const now = Date.now();
+
+        if (this._shakeState.startTime === 0) {
+            this._shakeState.startTime = now;
+            this._shakeState.lastX = x;
+            return false;
+        }
+
+        // Reset window if too much time has elapsed
+        if (now - this._shakeState.startTime > this._shakeConfig.windowMs) {
+            this._shakeState = {
+                startTime: now,
+                lastX: x,
+                lastDirection: null,
+                directionChanges: 0
+            };
+            return false;
+        }
+
+        const dx = x - this._shakeState.lastX;
+        if (Math.abs(dx) < this._shakeConfig.minDelta) {
+            return false;
+        }
+
+        const direction = dx > 0 ? 1 : -1;
+        if (this._shakeState.lastDirection !== null && direction !== this._shakeState.lastDirection) {
+            this._shakeState.directionChanges += 1;
+        }
+
+        this._shakeState.lastDirection = direction;
+        this._shakeState.lastX = x;
+
+        return this._shakeState.directionChanges >= this._shakeConfig.directionChanges;
+    }
+
+    /**
      * Enable drag detector
      */
     enable() {
@@ -318,6 +406,7 @@ export class DragDetector {
         }
 
         this._enabled = false;
+        this._resetShakeDetection();
 
         // Clean up active drag
         if (this._isDragging) {
@@ -328,6 +417,29 @@ export class DragDetector {
         }
 
         this._logger.info('DragDetector disabled');
+    }
+
+    /**
+     * Update configuration (currently shake detection)
+     * @param {Object} config
+     */
+    updateConfig(config) {
+        if (!config) return;
+
+        if (config.shakeEnabled !== undefined) {
+            this._shakeConfig.enabled = !!config.shakeEnabled;
+        }
+        if (config.shakeWindowMs !== undefined) {
+            this._shakeConfig.windowMs = Math.max(50, config.shakeWindowMs);
+        }
+        if (config.shakeMinDelta !== undefined) {
+            this._shakeConfig.minDelta = Math.max(5, config.shakeMinDelta);
+        }
+        if (config.shakeDirectionChanges !== undefined) {
+            this._shakeConfig.directionChanges = Math.max(1, config.shakeDirectionChanges);
+        }
+
+        this._logger.debug('DragDetector config updated', { ...this._shakeConfig });
     }
 
     /**
