@@ -1,6 +1,10 @@
-# Turtle - BTree Window Manager for GNOME
+# SnapKit - BTree Window Manager for GNOME
 
 A GNOME Shell extension for advanced window snapping and tiling with visual zone overlays.
+
+## Spec
+
+Canonical product and engineering spec: `docs/SPEC.md`
 
 ## Architecture
 
@@ -13,7 +17,7 @@ A GNOME Shell extension for advanced window snapping and tiling with visual zone
 ## Installation
 
 ```bash
-cd turtle
+cd snapkit
 make install
 make enable
 ```
@@ -25,6 +29,8 @@ Then restart GNOME Shell (Alt+F2 -> r on X11, or log out/in on Wayland).
 ```bash
 # Test in nested GNOME Shell
 make dev
+# or
+make launch
 
 # Reinstall and reload
 make reload

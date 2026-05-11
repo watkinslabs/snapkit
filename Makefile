@@ -1,6 +1,6 @@
-# Turtle GNOME Extension Makefile
+# SnapKit GNOME Extension Makefile
 
-EXTENSION_UUID = turtle@watkinslabs
+EXTENSION_UUID = snapkit@watkinslabs
 EXTENSION_DIR = $(EXTENSION_UUID)
 INSTALL_DIR = $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 BUILD_DIR = build
@@ -27,10 +27,10 @@ P_OK     := $(C_GREEN)[✓]$(C_NC)
 P_WARN   := $(C_YELLOW)[!]$(C_NC)
 P_ERR    := $(C_RED)[✗]$(C_NC)
 
-.PHONY: help install uninstall enable disable reload dev restart clean deploy build compile-schemas check-deps status version bump release
+.PHONY: help install uninstall enable disable reload dev launch restart clean deploy build compile-schemas check-deps status version bump release test validate
 
 help:
-	@echo "Turtle Extension - Available targets:"
+	@echo "SnapKit Extension - Available targets:"
 	@echo ""
 	@echo "  Development:"
 	@echo "    make install        - Install extension to user directory"
@@ -39,6 +39,7 @@ help:
 	@echo "    make disable        - Disable the extension"
 	@echo "    make reload         - Reinstall and reload extension"
 	@echo "    make dev            - Test in nested GNOME Shell (DEV_RESOLUTION=WxH)"
+	@echo "    make launch         - Alias for make dev"
 	@echo "    make restart        - Restart GNOME Shell (X11 only)"
 	@echo ""
 	@echo "  Release:"
@@ -46,6 +47,10 @@ help:
 	@echo "    make bump           - Bump version number (1 -> 2)"
 	@echo "    make build          - Create zip for extensions.gnome.org upload"
 	@echo "    make release        - Bump version and create release zip"
+	@echo ""
+	@echo "  Testing & Validation:"
+	@echo "    make test           - Run unit tests (Node test runner)"
+	@echo "    make validate       - Run validation gate (tests + schema/build checks)"
 	@echo ""
 	@echo "  Utilities:"
 	@echo "    make clean          - Remove build artifacts"
@@ -118,14 +123,29 @@ enable:
 		printf "$(P_ERR) Extension not installed. Run 'make install' first\n"; \
 		exit 1; \
 	fi
+	@disable_user_extensions=$$(gsettings get org.gnome.shell disable-user-extensions 2>/dev/null || printf "unknown"); \
+	if [ "$$disable_user_extensions" = "true" ]; then \
+		printf "$(P_WARN) User extensions are globally disabled\n"; \
+		printf "$(P_INFO) Re-enabling user extensions globally...\n"; \
+		if gsettings set org.gnome.shell disable-user-extensions false 2>/dev/null; then \
+			printf "$(P_OK) User extensions re-enabled globally\n"; \
+		else \
+			printf "$(P_ERR) Failed to re-enable user extensions globally\n"; \
+			exit 1; \
+		fi; \
+	fi
 	@output=$$(gnome-extensions enable $(EXTENSION_UUID) 2>&1); \
 	status=$$?; \
-	if [ $$status -eq 0 ]; then \
+	enabled_state=$$(gnome-extensions info $(EXTENSION_UUID) 2>/dev/null | awk -F': ' '/^[[:space:]]*Enabled:/ {print $$2; exit}'); \
+	if [ $$status -eq 0 ] && [ "$$enabled_state" = "Yes" ]; then \
 		printf "$(P_OK) Extension enabled successfully\n"; \
 	else \
 		printf "$(P_ERR) Failed to enable extension (exit code: $$status)\n"; \
 		if [ -n "$$output" ]; then \
 			printf "$(C_RED)    Error:$(C_NC) %s\n" "$$output"; \
+		fi; \
+		if [ "$$enabled_state" != "Yes" ]; then \
+			printf "$(P_WARN) gnome-extensions reports Enabled: %s\n" "$${enabled_state:-Unknown}"; \
 		fi; \
 		printf "$(P_WARN) Try restarting GNOME Shell first, then run 'make enable' again\n"; \
 		exit 1; \
@@ -154,6 +174,8 @@ dev: install
 	@MUTTER_DEBUG_DUMMY_MODE_SPECS=$(DEV_RESOLUTION) dbus-run-session -- gnome-shell --nested --wayland 2>&1 | grep -v "^$$" || true
 	@printf "$(P_OK) Nested session ended\n"
 
+launch: dev
+
 restart:
 	@printf "$(P_INFO) Restarting GNOME Shell...\n"
 	@if [ "$$XDG_SESSION_TYPE" = "x11" ]; then \
@@ -169,7 +191,7 @@ restart:
 	fi
 
 version:
-	@printf "$(P_INFO) Turtle v$(VERSION)\n"
+	@printf "$(P_INFO) SnapKit v$(VERSION)\n"
 	@printf "    GNOME Shell: 45, 46, 47, 48\n"
 	@printf "    metadata.json: $(METADATA)\n"
 
@@ -201,6 +223,14 @@ deploy: clean build
 	@printf "$(P_OK) Extension ready for deployment\n"
 	@echo "    Package: $(BUILD_DIR)/$(ZIP_NAME)"
 	@echo "    Upload to: https://extensions.gnome.org/upload/"
+
+test:
+	@printf "$(P_INFO) Running unit tests...\n"
+	@node --test tests/**/*.test.js
+
+validate:
+	@printf "$(P_INFO) Running validation gate...\n"
+	@node scripts/validate.mjs
 
 clean:
 	@printf "$(P_INFO) Cleaning build artifacts...\n"

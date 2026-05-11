@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <!-- Main SnapKit Extension Schema -->
+  <schema id="org.gnome.shell.extensions.snapkit" path="/org/gnome/shell/extensions/snapkit/">
+
+    <!-- Appearance Settings -->
+    <key name="zone-bg-color" type="s">
+      <default>'rgba(80, 120, 180, 0.3)'</default>
+      <summary>Zone background color</summary>
+      <description>Background color for zones in the overlay</description>
+    </key>
+
+    <key name="zone-border-color" type="s">
+      <default>'rgba(255, 255, 255, 0.5)'</default>
+      <summary>Zone border color</summary>
+      <description>Border color for zones in the overlay</description>
+    </key>
+
+    <key name="zone-highlight-color" type="s">
+      <default>'rgba(100, 180, 255, 0.6)'</default>
+      <summary>Zone highlight color</summary>
+      <description>Highlight color for selected zones</description>
+    </key>
+
+    <key name="active-layout-border-color" type="s">
+      <default>'rgba(160, 205, 255, 0.95)'</default>
+      <summary>Active layout border color</summary>
+      <description>Border color for currently active layout template in picker</description>
+    </key>
+
+    <key name="active-layout-text-color" type="s">
+      <default>'rgba(220, 235, 255, 0.98)'</default>
+      <summary>Active layout text color</summary>
+      <description>Label text color for currently active layout template in picker</description>
+    </key>
+
+    <key name="border-width" type="i">
+      <default>2</default>
+      <range min="1" max="5"/>
+      <summary>Border width</summary>
+      <description>Width of zone borders in pixels</description>
+    </key>
+
+    <key name="animation-speed" type="i">
+      <default>200</default>
+      <range min="100" max="500"/>
+      <summary>Animation speed</summary>
+      <description>Speed of animations in milliseconds</description>
+    </key>
+
+    <key name="enable-animations" type="b">
+      <default>true</default>
+      <summary>Enable animations</summary>
+      <description>Enable or disable animations</description>
+    </key>
+
+    <key name="overlay-opacity" type="d">
+      <default>0.95</default>
+      <range min="0.5" max="1.0"/>
+      <summary>Overlay opacity</summary>
+      <description>Opacity of the overlay background</description>
+    </key>
+
+    <key name="zone-label-size" type="i">
+      <default>24</default>
+      <range min="16" max="48"/>
+      <summary>Zone label size</summary>
+      <description>Font size for zone labels in pixels</description>
+    </key>
+
+    <key name="show-zone-numbers" type="b">
+      <default>true</default>
+      <summary>Show zone numbers</summary>
+      <description>Show or hide zone numbers in the overlay</description>
+    </key>
+
+    <!-- Behavior Settings -->
+    <key name="trigger-edge" type="s">
+      <default>'top'</default>
+      <summary>Trigger edge</summary>
+      <description>Which screen edge triggers the overlay (top, bottom, left, right)</description>
+    </key>
+
+    <key name="edge-size" type="i">
+      <default>2</default>
+      <range min="1" max="10"/>
+      <summary>Edge trigger size</summary>
+      <description>Size of edge trigger zones in pixels</description>
+    </key>
+
+    <key name="corner-size" type="i">
+      <default>10</default>
+      <range min="5" max="30"/>
+      <summary>Corner trigger size</summary>
+      <description>Size of corner trigger zones in pixels</description>
+    </key>
+
+    <key name="enable-edges" type="b">
+      <default>true</default>
+      <summary>Enable edge triggers</summary>
+      <description>Enable or disable edge trigger zones</description>
+    </key>
+
+    <key name="enable-corners" type="b">
+      <default>true</default>
+      <summary>Enable corner triggers</summary>
+      <description>Enable or disable corner trigger zones</description>
+    </key>
+
+    <key name="debounce-delay" type="i">
+      <default>100</default>
+      <range min="0" max="300"/>
+      <summary>Debounce delay</summary>
+      <description>Debounce delay for trigger zones in milliseconds</description>
+    </key>
+
+    <!-- Global Keybindings (registered with GNOME Shell) -->
+    <key name="toggle-overlay" type="as">
+      <default>['&lt;Super&gt;space']</default>
+      <summary>Toggle overlay shortcut</summary>
+      <description>Global keyboard shortcut to toggle the layout overlay</description>
+    </key>
+
+    <key name="snap-left" type="as">
+      <default>['&lt;Super&gt;Left']</default>
+      <summary>Snap window left</summary>
+      <description>Snap focused window to left half</description>
+    </key>
+
+    <key name="snap-right" type="as">
+      <default>['&lt;Super&gt;Right']</default>
+      <summary>Snap window right</summary>
+      <description>Snap focused window to right half</description>
+    </key>
+
+    <key name="snap-up" type="as">
+      <default>['&lt;Super&gt;Up']</default>
+      <summary>Snap window up</summary>
+      <description>Snap focused window to top half</description>
+    </key>
+
+    <key name="snap-down" type="as">
+      <default>['&lt;Super&gt;Down']</default>
+      <summary>Snap window down</summary>
+      <description>Snap focused window to bottom half</description>
+    </key>
+
+    <key name="snap-topleft" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Left']</default>
+      <summary>Snap window top-left</summary>
+      <description>Snap focused window to top-left quarter</description>
+    </key>
+
+    <key name="snap-topright" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Right']</default>
+      <summary>Snap window top-right</summary>
+      <description>Snap focused window to top-right quarter</description>
+    </key>
+
+    <key name="snap-bottomleft" type="as">
+      <default>['&lt;Super&gt;&lt;Shift&gt;Left']</default>
+      <summary>Snap window bottom-left</summary>
+      <description>Snap focused window to bottom-left quarter</description>
+    </key>
+
+    <key name="snap-bottomright" type="as">
+      <default>['&lt;Super&gt;&lt;Shift&gt;Right']</default>
+      <summary>Snap window bottom-right</summary>
+      <description>Snap focused window to bottom-right quarter</description>
+    </key>
+
+    <key name="cycle-layout" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;space']</default>
+      <summary>Cycle layout</summary>
+      <description>Cycle through available layouts on current monitor</description>
+    </key>
+
+    <key name="move-window-zone-left" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;Left']</default>
+      <summary>Move window to left zone</summary>
+      <description>Move focused window to neighboring zone on the left</description>
+    </key>
+
+    <key name="move-window-zone-right" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;Right']</default>
+      <summary>Move window to right zone</summary>
+      <description>Move focused window to neighboring zone on the right</description>
+    </key>
+
+    <key name="move-window-zone-up" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;Up']</default>
+      <summary>Move window to upper zone</summary>
+      <description>Move focused window to neighboring zone above</description>
+    </key>
+
+    <key name="move-window-zone-down" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;Down']</default>
+      <summary>Move window to lower zone</summary>
+      <description>Move focused window to neighboring zone below</description>
+    </key>
+
+    <key name="move-window-zone-next" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;bracketright']</default>
+      <summary>Move window to next zone</summary>
+      <description>Move focused window to next zone index</description>
+    </key>
+
+    <key name="move-window-zone-prev" type="as">
+      <default>['&lt;Super&gt;&lt;Control&gt;bracketleft']</default>
+      <summary>Move window to previous zone</summary>
+      <description>Move focused window to previous zone index</description>
+    </key>
+
+    <key name="move-window-zone-1" type="as"><default>[]</default><summary>Move window to zone 1</summary><description>Move focused window to zone index 1</description></key>
+    <key name="move-window-zone-2" type="as"><default>[]</default><summary>Move window to zone 2</summary><description>Move focused window to zone index 2</description></key>
+    <key name="move-window-zone-3" type="as"><default>[]</default><summary>Move window to zone 3</summary><description>Move focused window to zone index 3</description></key>
+    <key name="move-window-zone-4" type="as"><default>[]</default><summary>Move window to zone 4</summary><description>Move focused window to zone index 4</description></key>
+    <key name="move-window-zone-5" type="as"><default>[]</default><summary>Move window to zone 5</summary><description>Move focused window to zone index 5</description></key>
+    <key name="move-window-zone-6" type="as"><default>[]</default><summary>Move window to zone 6</summary><description>Move focused window to zone index 6</description></key>
+    <key name="move-window-zone-7" type="as"><default>[]</default><summary>Move window to zone 7</summary><description>Move focused window to zone index 7</description></key>
+    <key name="move-window-zone-8" type="as"><default>[]</default><summary>Move window to zone 8</summary><description>Move focused window to zone index 8</description></key>
+    <key name="move-window-zone-9" type="as"><default>[]</default><summary>Move window to zone 9</summary><description>Move focused window to zone index 9</description></key>
+
+    <!-- Overlay Navigation Keys (not global - work when overlay is open) -->
+    <key name="navigate-up" type="s">
+      <default>'Up'</default>
+      <summary>Navigate up shortcut</summary>
+      <description>Keyboard shortcut to navigate up in overlay</description>
+    </key>
+
+    <key name="navigate-down" type="s">
+      <default>'Down'</default>
+      <summary>Navigate down shortcut</summary>
+      <description>Keyboard shortcut to navigate down in overlay</description>
+    </key>
+
+    <key name="navigate-left" type="s">
+      <default>'Left'</default>
+      <summary>Navigate left shortcut</summary>
+      <description>Keyboard shortcut to navigate left in overlay</description>
+    </key>
+
+    <key name="navigate-right" type="s">
+      <default>'Right'</default>
+      <summary>Navigate right shortcut</summary>
+      <description>Keyboard shortcut to navigate right in overlay</description>
+    </key>
+
+    <key name="select-zone" type="s">
+      <default>'Return'</default>
+      <summary>Select zone shortcut</summary>
+      <description>Keyboard shortcut to select a zone in overlay</description>
+    </key>
+
+    <key name="cancel" type="s">
+      <default>'Escape'</default>
+      <summary>Cancel shortcut</summary>
+      <description>Keyboard shortcut to cancel operation</description>
+    </key>
+
+    <key name="auto-snap-on-drag" type="b">
+      <default>true</default>
+      <summary>Auto-snap on drag</summary>
+      <description>Automatically snap windows when dragged to zones</description>
+    </key>
+
+    <key name="focus-window-on-snap" type="b">
+      <default>true</default>
+      <summary>Focus window on snap</summary>
+      <description>Focus the window after snapping to a zone</description>
+    </key>
+
+    <key name="restore-on-unsnap" type="b">
+      <default>true</default>
+      <summary>Restore size on unsnap</summary>
+      <description>Restore window size when unsnapping from a zone</description>
+    </key>
+
+    <!-- Layout Settings -->
+    <key name="default-layout" type="s">
+      <default>'grid-2x2'</default>
+      <summary>Default layout</summary>
+      <description>Default layout ID for new monitors</description>
+    </key>
+
+    <key name="default-margin" type="i">
+      <default>0</default>
+      <range min="0" max="20"/>
+      <summary>Default margin</summary>
+      <description>Default margin for layouts in pixels</description>
+    </key>
+
+    <key name="default-padding" type="i">
+      <default>4</default>
+      <range min="0" max="20"/>
+      <summary>Default padding</summary>
+      <description>Default padding for layouts in pixels</description>
+    </key>
+
+    <key name="remember-per-workspace" type="b">
+      <default>false</default>
+      <summary>Remember layouts per workspace</summary>
+      <description>Remember different layouts for each workspace</description>
+    </key>
+
+    <key name="per-monitor-layouts" type="s">
+      <default>'{}'</default>
+      <summary>Per-monitor layouts</summary>
+      <description>JSON object mapping monitor indices to layout IDs</description>
+    </key>
+
+    <!-- Custom Layouts (JSON serialized) -->
+    <key name="custom-layouts" type="s">
+      <default>'{}'</default>
+      <summary>Custom layouts</summary>
+      <description>JSON object of custom user-defined layouts</description>
+    </key>
+
+    <!-- Divider Overrides (JSON serialized) -->
+    <key name="divider-overrides" type="s">
+      <default>'{}'</default>
+      <summary>Divider overrides</summary>
+      <description>JSON object of custom divider positions</description>
+    </key>
+
+    <key name="migrated-from-turtle" type="b">
+      <default>false</default>
+      <summary>Legacy migration complete</summary>
+      <description>Internal flag used to avoid re-running Turtle settings migration</description>
+    </key>
+
+  </schema>
+</schemalist>
