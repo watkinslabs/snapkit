@@ -527,8 +527,8 @@ export class AppearancePreferences {
         this._settings = { ...this._originalSettings };
         this._logger.info('Settings reset');
 
-        // Update UI (simplified - in real implementation, update all widgets)
-        this._eventBus.emit('appearance-settings-reset', {});
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('appearance-settings-reset', {});
     }
 
     /**

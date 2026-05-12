@@ -2,7 +2,7 @@
  * SnapKit - BTree Window Manager Extension for GNOME Shell
  *
  * Main entry point for GNOME Shell extension.
- * Provides init(), enable(), and disable() functions as required by GNOME Shell.
+ * Provides enable() and disable() lifecycle methods.
  *
  * Architecture:
  * - BTree-based space partitioning for layouts
@@ -20,23 +20,6 @@ import { ExtensionController } from './src/extensionController.js';
 import { Logger } from './src/core/logger.js';
 
 const logger = new Logger('Extension');
-
-/**
- * Global error handler wrapper to prevent GNOME Shell crashes
- * @param {Function} fn - Function to wrap
- * @param {string} context - Context for error logging
- * @returns {Function} Wrapped function
- */
-function safeCall(fn, context) {
-    return function(...args) {
-        try {
-            return fn.apply(this, args);
-        } catch (error) {
-            logger.error(`Error in ${context}`, error);
-            return undefined;
-        }
-    };
-}
 
 export default class SnapKitExtension extends Extension {
     constructor(metadata) {

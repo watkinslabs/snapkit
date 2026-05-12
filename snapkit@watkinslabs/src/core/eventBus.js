@@ -10,16 +10,10 @@ const logger = new Logger('EventBus');
  *
  * @example
  * const bus = new EventBus();
- *
- * // Subscribe to event
- * const unsubscribe = bus.on('zone-selected', (data) => {
- *     console.log('Zone selected:', data.zoneIndex);
+ * const unsubscribe = bus.on('zone-selected', data => {
+ *     // handle event data
  * });
- *
- * // Emit event
  * bus.emit('zone-selected', { zoneIndex: 3 });
- *
- * // Unsubscribe
  * unsubscribe();
  */
 export class EventBus {

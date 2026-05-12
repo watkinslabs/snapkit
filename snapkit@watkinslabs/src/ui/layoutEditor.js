@@ -898,8 +898,8 @@ export class LayoutEditor {
     _cancel() {
         this._logger.debug('Layout editing cancelled');
 
-        // Emit event
-        this._eventBus.emit('layout-editor-cancel', {});
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('layout-editor-cancel', {});
 
         this.hide();
     }

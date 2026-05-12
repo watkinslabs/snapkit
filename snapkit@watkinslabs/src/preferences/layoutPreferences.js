@@ -1267,7 +1267,8 @@ export class LayoutPreferences {
         // Refresh UI
         this._populateMonitors();
 
-        this._eventBus.emit('layout-settings-reset', {});
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('layout-settings-reset', {});
     }
 
     /**

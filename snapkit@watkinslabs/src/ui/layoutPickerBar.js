@@ -213,8 +213,8 @@ export class LayoutPickerBar {
         this._visible = true;
         this._logger.debug('Layout picker bar shown', { monitorIndex });
 
-        // Emit event
-        this._eventBus.emit('layout-picker-shown', { monitorIndex });
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('layout-picker-shown', { monitorIndex });
     }
 
     /**

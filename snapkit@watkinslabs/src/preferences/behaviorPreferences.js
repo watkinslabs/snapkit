@@ -554,8 +554,8 @@ export class BehaviorPreferences {
         this._settings = { ...this._originalSettings };
         this._logger.info('Settings reset');
 
-        // Update UI (simplified)
-        this._eventBus.emit('behavior-settings-reset', {});
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('behavior-settings-reset', {});
     }
 
     /**

@@ -16,52 +16,14 @@ import { Logger } from './core/logger.js';
 import { ServiceContainer } from './core/serviceContainer.js';
 import { ComponentManager } from './core/componentManager.js';
 import { EventBus } from './core/eventBus.js';
-
-import { ExtensionState, State } from './state/extensionState.js';
-import { DragState } from './state/dragState.js';
-import { InteractiveSelectState } from './state/interactiveSelectState.js';
-import { LayoutState } from './state/layoutState.js';
-
-import { LayoutTree } from './btree/tree/layoutTree.js';
-import { LayoutValidator } from './btree/validator/layoutValidator.js';
-import { LayoutResolver } from './btree/resolver/layoutResolver.js';
-import { LayoutManager } from './btree/manager/layoutManager.js';
-import { OverrideStore } from './btree/overrideStore.js';
-
-import { MonitorManager } from './tiling/monitorManager.js';
-import { WindowTracker } from './tiling/windowTracker.js';
-import { SnapHandler } from './tiling/snapHandler.js';
-import { TileManager } from './tiling/tileManager.js';
-import { DividerSyncManager } from './tiling/dividerSyncManager.js';
-
-import { LayoutOverlay } from './overlay/layoutOverlay.js';
-import { SnapPreviewOverlay } from './overlay/snapPreviewOverlay.js';
-import { ZonePositioningOverlay } from './overlay/zonePositioningOverlay.js';
-
-import { EventCoordinator } from './interaction/eventCoordinator.js';
-import { MouseHandler } from './interaction/mouseHandler.js';
-import { DragDetector } from './interaction/dragDetector.js';
-import { KeyboardHandler } from './interaction/keyboardHandler.js';
+import { registerServices } from './app/dependencyGraph.js';
+import { initializeComponents } from './app/componentLifecycle.js';
+import { wireEventHandlers } from './app/eventSubscriptions.js';
+import { initializeSettings, hasSettingsKey } from './app/settingsLifecycle.js';
+import { State } from './state/extensionState.js';
 import { KeybindingManager } from './interaction/keybindingManager.js';
-import { InteractionStateManager } from './interaction/interactionStateManager.js';
 
-import { WindowSelector } from './ui/windowSelector.js';
-import { LayoutEditor } from './ui/layoutEditor.js';
-import { LayoutSwitcher } from './ui/layoutSwitcher.js';
-import { LayoutPickerBar } from './ui/layoutPickerBar.js';
-
-import { AppearancePreferences } from './preferences/appearancePreferences.js';
-import { BehaviorPreferences } from './preferences/behaviorPreferences.js';
-import { LayoutPreferences } from './preferences/layoutPreferences.js';
-
-import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-
-// Extension settings schema ID
-const SCHEMA_ID = 'org.gnome.shell.extensions.snapkit';
-const LEGACY_SCHEMA_ID = 'org.gnome.shell.extensions.turtle';
-const MIGRATION_FLAG_KEY = 'migrated-from-turtle';
 
 export class ExtensionController {
     constructor() {
@@ -129,82 +91,7 @@ export class ExtensionController {
      * @private
      */
     _initializeSettings() {
-        try {
-            // Get the schema source from the extension's schemas directory
-            const schemaDir = Gio.File.new_for_path(
-                import.meta.url.replace('file://', '').replace('/src/extensionController.js', '/schemas')
-            );
-
-            let schemaSource;
-            if (schemaDir.query_exists(null)) {
-                schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-                    schemaDir.get_path(),
-                    Gio.SettingsSchemaSource.get_default(),
-                    false
-                );
-            } else {
-                schemaSource = Gio.SettingsSchemaSource.get_default();
-            }
-
-            const schema = schemaSource.lookup(SCHEMA_ID, true);
-            if (!schema) {
-                throw new Error(`Schema ${SCHEMA_ID} not found`);
-            }
-
-            this._settings = new Gio.Settings({ settings_schema: schema });
-            this._migrateLegacySettings(schemaSource);
-            this._logger.debug('GSettings initialized');
-        } catch (error) {
-            this._logger.error('Failed to initialize GSettings', { error });
-            // Continue without settings - keybindings won't work but extension can still function
-            this._settings = null;
-        }
-    }
-
-    /**
-     * Migrate settings from legacy Turtle schema once
-     * @private
-     * @param {Gio.SettingsSchemaSource} schemaSource
-     */
-    _migrateLegacySettings(schemaSource) {
-        if (!this._settings) {
-            return;
-        }
-
-        if (!this._hasSettingsKey(MIGRATION_FLAG_KEY)) {
-            this._logger.warn('Skipping legacy settings migration because migration key is missing');
-            return;
-        }
-
-        if (this._settings.get_boolean(MIGRATION_FLAG_KEY)) {
-            return;
-        }
-
-        try {
-            const legacySchema = schemaSource.lookup(LEGACY_SCHEMA_ID, true);
-            if (!legacySchema) {
-                this._settings.set_boolean(MIGRATION_FLAG_KEY, true);
-                return;
-            }
-
-            const legacySettings = new Gio.Settings({ settings_schema: legacySchema });
-            const keys = this._settings.list_keys();
-            let migratedCount = 0;
-
-            for (const key of keys) {
-                if (key === MIGRATION_FLAG_KEY || !legacySchema.has_key(key)) {
-                    continue;
-                }
-
-                this._settings.set_value(key, legacySettings.get_value(key));
-                migratedCount++;
-            }
-
-            this._settings.set_boolean(MIGRATION_FLAG_KEY, true);
-            this._logger.info('Migrated legacy Turtle settings', { migratedCount });
-        } catch (error) {
-            this._logger.error('Failed to migrate legacy settings', { error });
-        }
+        initializeSettings(this);
     }
 
     /**
@@ -214,21 +101,7 @@ export class ExtensionController {
      * @returns {boolean}
      */
     _hasSettingsKey(key) {
-        if (!this._settings) {
-            return false;
-        }
-
-        try {
-            const hasKey = this._settings.list_keys().includes(key);
-            if (!hasKey && !this._missingSettingsKeys.has(key)) {
-                this._missingSettingsKeys.add(key);
-                this._logger.warn('Settings key missing from loaded schema', { key });
-            }
-            return hasKey;
-        } catch (error) {
-            this._logger.error('Failed to inspect settings schema key', { key, error });
-            return false;
-        }
+        return hasSettingsKey(this, key);
     }
 
     /**
@@ -255,126 +128,7 @@ export class ExtensionController {
      * @private
      */
     _registerServices() {
-        const sc = this._serviceContainer;
-
-        // Core services
-        sc.register('eventBus', () => this._eventBus, true);
-        sc.register('componentManager', () => this._componentManager, true);
-
-        // State services
-        sc.register('extensionState', () => new ExtensionState(sc.get('eventBus')), true);
-        sc.register('dragState', () => new DragState(sc.get('eventBus')), true);
-        sc.register('interactiveSelectState', () => new InteractiveSelectState(sc.get('eventBus')), true);
-        sc.register('layoutState', () => new LayoutState(sc.get('eventBus')), true);
-
-        // BTree services
-        sc.register('layoutValidator', () => new LayoutValidator(), true);
-        sc.register('layoutResolver', () => new LayoutResolver(sc.get('layoutValidator')), true);
-        sc.register('layoutManager', () => new LayoutManager(sc.get('layoutValidator')), true);
-        sc.register('overrideStore', () => new OverrideStore(), true);
-
-        // Tiling services
-        sc.register('monitorManager', () => new MonitorManager(sc.get('layoutManager'), sc.get('eventBus')), true);
-        sc.register('windowTracker', () => new WindowTracker(sc.get('eventBus')), true);
-        sc.register('snapHandler', () => new SnapHandler(
-            sc.get('layoutResolver'),
-            sc.get('windowTracker'),
-            sc.get('monitorManager')
-        ), true);
-        sc.register('tileManager', () => new TileManager(
-            sc.get('windowTracker'),
-            sc.get('snapHandler'),
-            sc.get('overrideStore'),
-            sc.get('monitorManager'),
-            sc.get('layoutManager')
-        ), true);
-        sc.register('dividerSyncManager', () => new DividerSyncManager(
-            sc.get('windowTracker'),
-            sc.get('overrideStore'),
-            sc.get('layoutResolver'),
-            sc.get('layoutManager'),
-            sc.get('monitorManager'),
-            sc.get('snapHandler'),
-            sc.get('eventBus')
-        ), true);
-
-        // Overlay services
-        sc.register('layoutOverlay', () => new LayoutOverlay(
-            sc.get('eventBus'),
-            sc.get('layoutResolver'),
-            sc.get('monitorManager')
-        ), true);
-        sc.register('snapPreviewOverlay', () => new SnapPreviewOverlay(
-            sc.get('layoutResolver'),
-            sc.get('monitorManager')
-        ), true);
-        sc.register('zonePositioningOverlay', () => new ZonePositioningOverlay(
-            sc.get('layoutResolver'),
-            sc.get('monitorManager')
-        ), true);
-
-        // Interaction services
-        sc.register('eventCoordinator', () => new EventCoordinator(
-            sc.get('extensionState'),
-            sc.get('eventBus')
-        ), true);
-        sc.register('mouseHandler', () => new MouseHandler(
-            sc.get('eventCoordinator'),
-            sc.get('extensionState'),
-            sc.get('monitorManager'),
-            sc.get('layoutManager'),
-            sc.get('eventBus')
-        ), true);
-        sc.register('dragDetector', () => new DragDetector(
-            sc.get('extensionState'),
-            sc.get('dragState'),
-            sc.get('eventBus')
-        ), true);
-        sc.register('keyboardHandler', () => new KeyboardHandler(
-            sc.get('eventCoordinator'),
-            sc.get('extensionState'),
-            sc.get('eventBus')
-        ), true);
-        sc.register('interactionStateManager', () => new InteractionStateManager(
-            sc.get('eventCoordinator'),
-            sc.get('mouseHandler'),
-            sc.get('dragDetector'),
-            sc.get('keyboardHandler'),
-            sc.get('extensionState'),
-            sc.get('eventBus'),
-            sc.get('monitorManager')
-        ), true);
-
-        // UI services
-        sc.register('windowSelector', () => new WindowSelector(sc.get('eventBus')), true);
-        sc.register('layoutEditor', () => new LayoutEditor(
-            sc.get('layoutResolver'),
-            sc.get('layoutManager'),
-            sc.get('eventBus')
-        ), true);
-        sc.register('layoutSwitcher', () => new LayoutSwitcher(
-            sc.get('layoutManager'),
-            sc.get('layoutResolver'),
-            sc.get('eventBus')
-        ), true);
-        sc.register('layoutPickerBar', () => new LayoutPickerBar(
-            sc.get('layoutManager'),
-            sc.get('layoutResolver'),
-            sc.get('monitorManager'),
-            sc.get('snapHandler'),
-            sc.get('eventBus')
-        ), true);
-
-        // Preferences services
-        sc.register('appearancePreferences', () => new AppearancePreferences(sc.get('eventBus')), true);
-        sc.register('behaviorPreferences', () => new BehaviorPreferences(sc.get('eventBus')), true);
-        sc.register('layoutPreferences', () => new LayoutPreferences(
-            sc.get('layoutManager'),
-            sc.get('monitorManager'),
-            sc.get('eventBus')
-        ), true);
-
-        this._logger.debug('Services registered');
+        registerServices(this);
     }
 
     /**
@@ -382,108 +136,7 @@ export class ExtensionController {
      * @private
      */
     _initializeComponents() {
-        const cm = this._componentManager;
-
-        // Initialize monitors first
-        cm.register('monitorManager', () => {
-            const mm = this._serviceContainer.get('monitorManager');
-            mm.initialize(Main.layoutManager);
-            return mm;
-        });
-
-        // Initialize window tracker (for cleanup on window close)
-        cm.register('windowTracker', () => {
-            const wt = this._serviceContainer.get('windowTracker');
-            wt.initialize();
-            return wt;
-        });
-
-        cm.register('tileManager', () => {
-            const tm = this._serviceContainer.get('tileManager');
-            tm.initialize();
-            return tm;
-        });
-
-        // Initialize interaction system
-        cm.register('interactionStateManager', () => {
-            const ism = this._serviceContainer.get('interactionStateManager');
-            ism.initialize();
-            return ism;
-        });
-
-        // Initialize divider sync manager
-        cm.register('dividerSyncManager', () => {
-            const dsm = this._serviceContainer.get('dividerSyncManager');
-            dsm.initialize();
-            return dsm;
-        });
-
-        // Initialize overlays
-        cm.register('layoutOverlay', () => {
-            const lo = this._serviceContainer.get('layoutOverlay');
-            lo.initialize(Main.uiGroup);
-            return lo;
-        });
-
-        cm.register('snapPreviewOverlay', () => {
-            const spo = this._serviceContainer.get('snapPreviewOverlay');
-            spo.initialize(Main.uiGroup);
-            return spo;
-        });
-
-        cm.register('zonePositioningOverlay', () => {
-            const zpo = this._serviceContainer.get('zonePositioningOverlay');
-            zpo.initialize(Main.uiGroup);
-            return zpo;
-        });
-
-        // Initialize UI components
-        cm.register('windowSelector', () => {
-            const ws = this._serviceContainer.get('windowSelector');
-            ws.initialize(Main.uiGroup);
-            return ws;
-        });
-
-        cm.register('layoutEditor', () => {
-            const le = this._serviceContainer.get('layoutEditor');
-            le.initialize(Main.uiGroup);
-            return le;
-        });
-
-        cm.register('layoutSwitcher', () => {
-            const ls = this._serviceContainer.get('layoutSwitcher');
-            ls.initialize(Main.uiGroup);
-            return ls;
-        });
-
-        cm.register('layoutPickerBar', () => {
-            const lpb = this._serviceContainer.get('layoutPickerBar');
-            lpb.initialize(Main.uiGroup);
-            return lpb;
-        });
-
-        // Initialize preferences
-        cm.register('appearancePreferences', () => {
-            const ap = this._serviceContainer.get('appearancePreferences');
-            ap.initialize(Main.uiGroup);
-            return ap;
-        });
-
-        cm.register('behaviorPreferences', () => {
-            const bp = this._serviceContainer.get('behaviorPreferences');
-            bp.initialize(Main.uiGroup);
-            return bp;
-        });
-
-        cm.register('layoutPreferences', () => {
-            const lp = this._serviceContainer.get('layoutPreferences');
-            const le = this._serviceContainer.get('layoutEditor');
-            lp.setLayoutEditor(le);
-            lp.initialize(Main.uiGroup);
-            return lp;
-        });
-
-        this._logger.debug('Components initialized');
+        initializeComponents(this);
     }
 
     /**
@@ -491,198 +144,7 @@ export class ExtensionController {
      * @private
      */
     _wireEventHandlers() {
-        // Request events from interaction layer
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-open-overlay', (data) => {
-                this._handleOpenOverlay(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-close-overlay', () => {
-                this._handleCloseOverlay();
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-snap-preview', (data) => {
-                this._handleSnapPreview(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('update-snap-preview', (data) => {
-                this._handleUpdateSnapPreview(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-snap-to-zone', (data) => {
-                this._handleSnapToZone(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-cancel', () => {
-                this._handleCancel();
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-zone-navigation', (data) => {
-                this._handleZoneNavigation(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-zone-select', () => {
-                this._handleZoneSelect();
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-direct-zone-select', (data) => {
-                this._handleDirectZoneSelect(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('cancel-snap-preview', (data) => {
-                this._handleCancelSnapPreview(data);
-            })
-        );
-
-        // Zone selection from overlay
-        this._eventSubscriptions.push(
-            this._eventBus.on('zone-selected', (data) => {
-                this._handleZoneSelected(data);
-            })
-        );
-
-        // Window selection
-        this._eventSubscriptions.push(
-            this._eventBus.on('window-selected', (data) => {
-                this._handleWindowSelected(data);
-            })
-        );
-
-        // Layout switching
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-switched', (data) => {
-                this._handleLayoutSwitched(data);
-            })
-        );
-
-        // Settings changes
-        this._eventSubscriptions.push(
-            this._eventBus.on('appearance-settings-changed', (data) => {
-                this._handleAppearanceSettings(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('behavior-settings-changed', (data) => {
-                this._handleBehaviorSettings(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-settings-changed', (data) => {
-                this._handleLayoutSettings(data);
-            })
-        );
-
-        // Layout picker bar events
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-picker-hidden', () => {
-                this._handleLayoutPickerHidden();
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('zone-snapped', (data) => {
-                this._handleZoneSnapped(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('request-zone-snap', (data) => {
-                this._handleRequestZoneSnap(data);
-            })
-        );
-
-        // Global keybinding events
-        this._eventSubscriptions.push(
-            this._eventBus.on('keyboard-snap-window', (data) => {
-                this._handleKeyboardSnapWindow(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('keyboard-cycle-layout', () => {
-                this._handleKeyboardCycleLayout();
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('keyboard-move-window-zone', (data) => {
-                this._handleKeyboardMoveWindowZone(data);
-            })
-        );
-
-        // Custom layout management events
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-created', (data) => {
-                this._handleLayoutCreated(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-updated', (data) => {
-                this._handleLayoutUpdated(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-deleted', (data) => {
-                this._handleLayoutDeleted(data);
-            })
-        );
-
-        // Divider override events (save when changed)
-        this._eventSubscriptions.push(
-            this._eventBus.on('divider-moved', (data) => {
-                this._handleDividerMoved(data);
-            })
-        );
-
-        // Import/export events
-        this._eventSubscriptions.push(
-            this._eventBus.on('layouts-export-requested', () => {
-                this._handleExportLayouts();
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('layouts-import-requested', () => {
-                this._handleImportLayouts();
-            })
-        );
-
-        // Layout editor events
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-editor-create', (data) => {
-                this._handleLayoutEditorCreate(data);
-            })
-        );
-
-        this._eventSubscriptions.push(
-            this._eventBus.on('layout-editor-update', (data) => {
-                this._handleLayoutEditorUpdate(data);
-            })
-        );
-
-        this._logger.debug('Event handlers wired');
+        wireEventHandlers(this);
     }
 
     /**
@@ -998,7 +460,8 @@ export class ExtensionController {
         };
 
         this._logger.info('Drop debug snapshot', payload);
-        this._eventBus.emit('debug-drop-snapshot', payload);
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('debug-drop-snapshot', payload);
     }
 
     /**
@@ -1998,8 +1461,8 @@ export class ExtensionController {
         const json = layoutManager.exportAllCustomLayouts();
         this._logger.info('Custom layouts JSON', { json });
 
-        // Emit event with data for UI to handle file save
-        this._eventBus.emit('layouts-export-data', { json });
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('layouts-export-data', { json });
     }
 
     /**
@@ -2009,8 +1472,8 @@ export class ExtensionController {
     _handleImportLayouts() {
         this._logger.info('Import layouts requested');
         // In a real implementation, this would open a file chooser dialog
-        // Emit event for UI to handle file selection
-        this._eventBus.emit('layouts-import-dialog-requested', {});
+        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
+        // this._eventBus.emit('layouts-import-dialog-requested', {});
     }
 
     /**

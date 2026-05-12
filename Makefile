@@ -211,6 +211,10 @@ build: check-deps compile-schemas
 	@cp -r $(addprefix $(EXTENSION_DIR)/, $(DIRS)) $(PACKAGE_STAGING_DIR)/ || { printf "$(P_ERR) Failed to stage directories\n"; exit 1; }
 	@sed -i 's/^export const DEBUG_LOGGING_ENABLED = true;/export const DEBUG_LOGGING_ENABLED = false;/' \
 		$(PACKAGE_STAGING_DIR)/src/core/debug.js || { printf "$(P_ERR) Failed to disable debug logging for production package\n"; exit 1; }
+	@grep -q '^export const DEBUG_LOGGING_ENABLED = false;' $(PACKAGE_STAGING_DIR)/src/core/debug.js || { \
+		printf "$(P_ERR) Debug logging flag replacement did not apply in production package staging\n"; \
+		exit 1; \
+	}
 	@# Create zip with files at root level (required for extensions.gnome.org)
 	@cd $(PACKAGE_STAGING_DIR) && zip -r ../../$(ZIP_NAME) $(FILES) $(DIRS) >/dev/null 2>&1 || { \
 		printf "$(P_ERR) Failed to create zip archive\n"; \
