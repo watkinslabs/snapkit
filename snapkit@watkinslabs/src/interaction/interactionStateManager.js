@@ -11,6 +11,8 @@
  * Provides central point for enabling/disabling interactions.
  */
 
+import Clutter from 'gi://Clutter';
+
 import { Logger } from '../core/logger.js';
 import { State } from '../state/extensionState.js';
 
@@ -56,6 +58,12 @@ export class InteractionStateManager {
         this._triggerZone = null;
         this._dragCancelled = false;
         this._dragOverlayOpen = false;
+        this._dragZonesActive = true;
+        this._dragZoneModifierConfig = {
+            autoSnapOnDrag: true,
+            modifierDisablesZones: true,
+            modifierKey: 'control'
+        };
     }
 
     /**
@@ -207,7 +215,7 @@ export class InteractionStateManager {
      * @param {Object} data
      */
     _onWindowDragStart(data) {
-        const { window, position } = data;
+        const { window, position, modifiers = 0 } = data;
 
         if (!window) {
             this._logger.warn('Window drag started with null window');
@@ -229,25 +237,42 @@ export class InteractionStateManager {
         });
 
         this._dragCancelled = false;
-        this._dragOverlayOpen = true;
+        this._dragZonesActive = this._areDragZonesActive(modifiers);
+
         // Determine monitor
         const centerX = rect.x + rect.width / 2;
         const centerY = rect.y + rect.height / 2;
-        const monitorIndex = this._monitorManager.getMonitorAtPoint(centerX, centerY);
+        const detectedMonitor = this._monitorManager.getMonitorAtPoint(centerX, centerY);
+        const monitorIndex = detectedMonitor !== -1
+            ? detectedMonitor
+            : this._monitorManager.getPrimaryMonitorIndex();
 
         this._currentMonitor = monitorIndex;
-        this._eventBus.emit('request-open-overlay', {
-            monitorIndex,
-            triggerZone: null,
-            position,
-            pinnedOpen: true
-        });
 
-        // Request snap preview overlay
-        this._eventBus.emit('request-snap-preview', {
-            monitorIndex,
-            window
-        });
+        if (this._dragZonesActive) {
+            this._dragOverlayOpen = true;
+            this._eventBus.emit('request-open-overlay', {
+                monitorIndex,
+                triggerZone: null,
+                position,
+                pinnedOpen: true
+            });
+
+            // Request snap preview overlay
+            this._eventBus.emit('request-snap-preview', {
+                monitorIndex,
+                window
+            });
+        } else {
+            this._dragOverlayOpen = false;
+            this._eventBus.emit('update-snap-preview', {
+                window,
+                position,
+                monitorIndex,
+                zonesActive: false,
+                modifiers
+            });
+        }
     }
 
     /**
@@ -256,28 +281,50 @@ export class InteractionStateManager {
      * @param {Object} data
      */
     _onWindowDragMove(data) {
-        const { window, position } = data;
+        const { window, position, modifiers = 0 } = data;
 
         if (this._dragCancelled) {
             return;
         }
 
+        const previousMonitor = this._currentMonitor;
         const pointerMonitor = this._monitorManager.getMonitorAtPoint(position.x, position.y);
-        if (pointerMonitor !== -1 && this._currentMonitor !== pointerMonitor) {
-            this._dragOverlayOpen = true;
+        if (pointerMonitor !== -1) {
             this._currentMonitor = pointerMonitor;
+        }
+
+        const zonesActive = this._areDragZonesActive(modifiers);
+        const monitorChanged = pointerMonitor !== -1 && previousMonitor !== pointerMonitor;
+        const zonesBecameActive = zonesActive && !this._dragZonesActive;
+        this._dragZonesActive = zonesActive;
+
+        if (zonesActive &&
+            this._currentMonitor !== null &&
+            this._currentMonitor !== -1 &&
+            (monitorChanged || zonesBecameActive || !this._dragOverlayOpen)) {
+            this._dragOverlayOpen = true;
             this._eventBus.emit('request-open-overlay', {
-                monitorIndex: pointerMonitor,
+                monitorIndex: this._currentMonitor,
                 triggerZone: null,
                 position,
                 pinnedOpen: true
             });
+
+            this._eventBus.emit('request-snap-preview', {
+                monitorIndex: this._currentMonitor,
+                window
+            });
+        } else if (!zonesActive) {
+            this._dragOverlayOpen = false;
         }
 
         // Update snap preview based on cursor position
         this._eventBus.emit('update-snap-preview', {
             window,
-            position
+            position,
+            monitorIndex: this._currentMonitor,
+            zonesActive,
+            modifiers
         });
     }
 
@@ -287,21 +334,32 @@ export class InteractionStateManager {
      * @param {Object} data
      */
     _onWindowDragEnd(data) {
-        const { window, position } = data;
+        const { window, position, modifiers = 0 } = data;
+        const pointerMonitor = this._monitorManager.getMonitorAtPoint(position.x, position.y);
+        const dropMonitor = pointerMonitor !== -1
+            ? pointerMonitor
+            : (this._currentMonitor !== null && this._currentMonitor !== -1
+                ? this._currentMonitor
+                : this._monitorManager.getPrimaryMonitorIndex());
+        this._currentMonitor = dropMonitor;
+        const zonesActive = this._areDragZonesActive(modifiers);
+        this._dragZonesActive = zonesActive;
 
         this._logger.debug('Window drag ended', {
             windowTitle: window.get_title(),
-            position
+            position,
+            zonesActive
         });
 
         if (this._dragCancelled) {
             this._dragCancelled = false;
             this._dragOverlayOpen = false;
+            this._dragZonesActive = true;
             this._eventBus.emit('cancel-snap-preview', {
                 reason: 'shake',
                 window,
                 position,
-                monitorIndex: this._currentMonitor
+                monitorIndex: dropMonitor
             });
             return;
         }
@@ -310,10 +368,13 @@ export class InteractionStateManager {
         this._eventBus.emit('request-snap-to-zone', {
             window,
             position,
-            monitorIndex: this._currentMonitor
+            monitorIndex: dropMonitor,
+            zonesActive,
+            modifiers
         });
 
         this._dragOverlayOpen = false;
+        this._dragZonesActive = true;
     }
 
     /**
@@ -328,6 +389,7 @@ export class InteractionStateManager {
 
         this._dragCancelled = true;
         this._dragOverlayOpen = false;
+        this._dragZonesActive = true;
 
         // Close snap preview and return to normal drag
         this._eventBus.emit('cancel-snap-preview', {
@@ -348,6 +410,75 @@ export class InteractionStateManager {
         this._logger.info('Shake detected, snap mode cancelled');
     }
 
+    /**
+     * Normalize configured modifier key.
+     * @private
+     * @param {string} modifierKey
+     * @returns {string}
+     */
+    _normalizeDragModifierKey(modifierKey) {
+        const normalized = typeof modifierKey === 'string'
+            ? modifierKey.trim().toLowerCase()
+            : '';
+        return ['control', 'shift', 'alt', 'super'].includes(normalized)
+            ? normalized
+            : 'control';
+    }
+
+    /**
+     * Check whether any modifier mask matches current state.
+     * @private
+     * @param {number} modifiers
+     * @param {string[]} maskNames
+     * @returns {boolean}
+     */
+    _hasModifierMask(modifiers = 0, maskNames = []) {
+        for (const name of maskNames) {
+            const mask = Clutter.ModifierType?.[name];
+            if (typeof mask === 'number' && (modifiers & mask) !== 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check whether configured drag modifier is pressed.
+     * @private
+     * @param {number} modifiers
+     * @returns {boolean}
+     */
+    _isDragModifierPressed(modifiers = 0) {
+        switch (this._dragZoneModifierConfig.modifierKey) {
+            case 'control':
+                return this._hasModifierMask(modifiers, ['CONTROL_MASK']);
+            case 'shift':
+                return this._hasModifierMask(modifiers, ['SHIFT_MASK']);
+            case 'alt':
+                return this._hasModifierMask(modifiers, ['MOD1_MASK']);
+            case 'super':
+                return this._hasModifierMask(modifiers, ['SUPER_MASK', 'MOD4_MASK']);
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Resolve whether drag zones should be active for current modifier state.
+     * @private
+     * @param {number} modifiers
+     * @returns {boolean}
+     */
+    _areDragZonesActive(modifiers = 0) {
+        if (!this._dragZoneModifierConfig.autoSnapOnDrag) {
+            return false;
+        }
+        const modifierPressed = this._isDragModifierPressed(modifiers);
+        return this._dragZoneModifierConfig.modifierDisablesZones
+            ? !modifierPressed
+            : modifierPressed;
+    }
+
 
     /**
      * Handle keyboard toggle overlay
@@ -358,7 +489,7 @@ export class InteractionStateManager {
 
         if (currentState === State.CLOSED) {
             // Open overlay on primary monitor
-            const primaryMonitor = this._monitorManager.getPrimaryMonitor();
+            const primaryMonitor = this._monitorManager.getPrimaryMonitorIndex();
             this._currentMonitor = primaryMonitor;
 
             this._logger.debug('Opening overlay via keyboard');
@@ -445,6 +576,8 @@ export class InteractionStateManager {
         if (newState === State.CLOSED) {
             this._currentMonitor = null;
             this._triggerZone = null;
+            this._dragOverlayOpen = false;
+            this._dragZonesActive = true;
         }
     }
 
@@ -482,6 +615,40 @@ export class InteractionStateManager {
      */
     updateKeyboardConfig(config) {
         this._keyboardHandler.updateConfig(config);
+    }
+
+    /**
+     * Update drag modifier behavior configuration.
+     *
+     * @param {Object} config
+     */
+    updateDragZoneModifierConfig(config) {
+        if (!config || typeof config !== 'object') {
+            return;
+        }
+
+        let updated = false;
+        const autoSnapOnDrag = config.autoSnapOnDrag;
+        if (typeof autoSnapOnDrag === 'boolean') {
+            this._dragZoneModifierConfig.autoSnapOnDrag = autoSnapOnDrag;
+            updated = true;
+        }
+
+        const modifierDisablesZones = config.modifierDisablesZones ?? config.dragZoneModifierDisablesZones;
+        if (typeof modifierDisablesZones === 'boolean') {
+            this._dragZoneModifierConfig.modifierDisablesZones = modifierDisablesZones;
+            updated = true;
+        }
+
+        const modifierKey = config.modifierKey ?? config.dragZoneModifierKey;
+        if (modifierKey !== undefined) {
+            this._dragZoneModifierConfig.modifierKey = this._normalizeDragModifierKey(modifierKey);
+            updated = true;
+        }
+
+        if (updated) {
+            this._logger.debug('Drag zone modifier configuration updated', this._dragZoneModifierConfig);
+        }
     }
 
     /**

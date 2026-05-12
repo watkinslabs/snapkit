@@ -13,6 +13,7 @@
 import Clutter from 'gi://Clutter';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 import { State } from '../state/extensionState.js';
 
 export class EventCoordinator {
@@ -64,27 +65,39 @@ export class EventCoordinator {
      */
     _connectStageEvents() {
         // Key press events
-        const keySignalId = global.stage.connect('key-press-event', (actor, event) => {
-            return this._onKeyPress(event);
-        });
+        const keySignalId = global.stage.connect('key-press-event', safeCallback(
+            this._logger,
+            'stage key-press-event',
+            (actor, event) => this._onKeyPress(event),
+            Clutter.EVENT_PROPAGATE
+        ));
         this._signalIds.push({ actor: global.stage, id: keySignalId });
 
         // Key release events
-        const keyReleaseSignalId = global.stage.connect('key-release-event', (actor, event) => {
-            return this._onKeyRelease(event);
-        });
+        const keyReleaseSignalId = global.stage.connect('key-release-event', safeCallback(
+            this._logger,
+            'stage key-release-event',
+            (actor, event) => this._onKeyRelease(event),
+            Clutter.EVENT_PROPAGATE
+        ));
         this._signalIds.push({ actor: global.stage, id: keyReleaseSignalId });
 
         // Motion events (cursor movement)
-        const motionSignalId = global.stage.connect('motion-event', (actor, event) => {
-            return this._onMotion(event);
-        });
+        const motionSignalId = global.stage.connect('motion-event', safeCallback(
+            this._logger,
+            'stage motion-event',
+            (actor, event) => this._onMotion(event),
+            Clutter.EVENT_PROPAGATE
+        ));
         this._signalIds.push({ actor: global.stage, id: motionSignalId });
 
         // Button press events (mouse clicks)
-        const buttonSignalId = global.stage.connect('button-press-event', (actor, event) => {
-            return this._onButtonPress(event);
-        });
+        const buttonSignalId = global.stage.connect('button-press-event', safeCallback(
+            this._logger,
+            'stage button-press-event',
+            (actor, event) => this._onButtonPress(event),
+            Clutter.EVENT_PROPAGATE
+        ));
         this._signalIds.push({ actor: global.stage, id: buttonSignalId });
 
         this._logger.debug('Stage events connected');

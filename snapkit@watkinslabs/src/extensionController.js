@@ -40,6 +40,7 @@ export class ExtensionController {
         this._enabled = false;
         this._eventSubscriptions = [];
         this._missingSettingsKeys = new Set();
+        this._settingsSignalIds = [];
     }
 
     /**
@@ -148,6 +149,61 @@ export class ExtensionController {
     }
 
     /**
+     * Resolve the configured default layout ID with safety fallbacks.
+     * @private
+     * @returns {string|null}
+     */
+    _getConfiguredDefaultLayoutId() {
+        const layoutManager = this._serviceContainer.get('layoutManager');
+        const configuredDefault = this._settings?.get_string('default-layout') || null;
+
+        if (configuredDefault && layoutManager.hasLayout(configuredDefault)) {
+            return configuredDefault;
+        }
+
+        if (configuredDefault) {
+            this._logger.warn('Configured default layout is unavailable, using fallback', {
+                layoutId: configuredDefault
+            });
+        }
+
+        if (layoutManager.hasLayout('grid-2x2')) {
+            return 'grid-2x2';
+        }
+        if (layoutManager.hasLayout('half-split')) {
+            return 'half-split';
+        }
+
+        const firstLayoutId = layoutManager.getAllLayouts()?.[0]?.id || null;
+        return firstLayoutId;
+    }
+
+    /**
+     * Resolve monitor layout, falling back to configured default when needed.
+     * @private
+     * @param {number} monitorIndex
+     * @returns {string|null}
+     */
+    _resolveLayoutIdForMonitor(monitorIndex) {
+        const layoutState = this._serviceContainer.get('layoutState');
+        const layoutManager = this._serviceContainer.get('layoutManager');
+        const monitorLayoutId = layoutState.getLayoutForMonitor(monitorIndex);
+
+        if (monitorLayoutId && layoutManager.hasLayout(monitorLayoutId)) {
+            return monitorLayoutId;
+        }
+
+        if (monitorLayoutId) {
+            this._logger.warn('Per-monitor layout is unavailable, using default layout', {
+                monitorIndex,
+                layoutId: monitorLayoutId
+            });
+        }
+
+        return this._getConfiguredDefaultLayoutId();
+    }
+
+    /**
      * Handle open overlay request
      * @private
      * @param {Object} data
@@ -156,14 +212,17 @@ export class ExtensionController {
         const { monitorIndex, pinnedOpen = false } = data;
         const extensionState = this._serviceContainer.get('extensionState');
         const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
-        const layoutState = this._serviceContainer.get('layoutState');
 
         // Transition to OPEN only from CLOSED. During drag we can display picker without state transition.
         if (extensionState.current === State.CLOSED && extensionState.canTransitionTo(State.OPEN)) {
             extensionState.transitionTo(State.OPEN);
         }
 
-        const activeLayoutId = layoutState.getLayoutForMonitor(monitorIndex) || this._settings?.get_string('default-layout') || 'half-split';
+        const activeLayoutId = this._resolveLayoutIdForMonitor(monitorIndex);
+        if (!activeLayoutId) {
+            this._logger.warn('No layout available to open picker', { monitorIndex });
+            return;
+        }
 
         // Show the layout picker bar (Windows 11 style)
         layoutPickerBar.show(monitorIndex, { pinnedOpen, activeLayoutId });
@@ -195,14 +254,16 @@ export class ExtensionController {
      */
     _handleSnapPreview(data) {
         const { monitorIndex, window } = data;
-        const layoutState = this._serviceContainer.get('layoutState');
         const snapPreviewOverlay = this._serviceContainer.get('snapPreviewOverlay');
         const layoutManager = this._serviceContainer.get('layoutManager');
         const overrideStore = this._serviceContainer.get('overrideStore');
 
-        // Get layout for monitor - this should use the layout set by zone-snapped
-        const rawLayoutId = layoutState.getLayoutForMonitor(monitorIndex);
-        const layoutId = rawLayoutId || 'half-split';
+        // Resolve layout for monitor with configured default fallback.
+        const layoutId = this._resolveLayoutIdForMonitor(monitorIndex);
+        if (!layoutId) {
+            this._logger.error('No layout available for snap preview', { monitorIndex });
+            return;
+        }
 
         const layout = layoutManager.getLayout(layoutId);
 
@@ -226,9 +287,19 @@ export class ExtensionController {
      * @param {Object} data
      */
     _handleUpdateSnapPreview(data) {
-        const { position } = data;
+        const { position, zonesActive = true } = data;
         const snapPreviewOverlay = this._serviceContainer.get('snapPreviewOverlay');
         const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
+
+        if (!zonesActive) {
+            snapPreviewOverlay.hide();
+            layoutPickerBar.hide();
+            return;
+        }
+
+        if (!position) {
+            return;
+        }
 
         // Update highlighted zone based on cursor position
         snapPreviewOverlay.highlightZoneAtCursor(position.x, position.y);
@@ -241,7 +312,7 @@ export class ExtensionController {
      * @param {Object} data
      */
     _handleSnapToZone(data) {
-        const { window, position, monitorIndex } = data;
+        const { window, position, monitorIndex, zonesActive = true } = data;
         const snapPreviewOverlay = this._serviceContainer.get('snapPreviewOverlay');
         const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
         const layoutState = this._serviceContainer.get('layoutState');
@@ -250,16 +321,28 @@ export class ExtensionController {
         const snapHandler = this._serviceContainer.get('snapHandler');
         const windowTracker = this._serviceContainer.get('windowTracker');
 
+        if (!position || typeof monitorIndex !== 'number') {
+            this._logger.warn('Invalid drag drop payload for snap-to-zone', {
+                hasWindow: !!window,
+                position,
+                monitorIndex
+            });
+            snapPreviewOverlay.hide();
+            layoutPickerBar.hide();
+            return;
+        }
+
         // Resolve drop target from layout picker first (works during active drag),
         // then fallback to preview highlight.
-        const hoveredZone = layoutPickerBar.highlightZoneAtCursor(position.x, position.y);
-        const previewZoneIndex = snapPreviewOverlay.highlightZoneAtCursor(position.x, position.y);
+        const hoveredZone = zonesActive ? layoutPickerBar.highlightZoneAtCursor(position.x, position.y) : null;
+        const previewZoneIndex = zonesActive ? snapPreviewOverlay.highlightZoneAtCursor(position.x, position.y) : null;
         const zoneIndex = hoveredZone?.zoneIndex ?? previewZoneIndex;
 
         const debugDropBase = {
             event: 'request-snap-to-zone',
             monitorIndex,
             position: { x: position.x, y: position.y },
+            zonesActive,
             previewZoneIndex,
             hoveredZoneIndex: hoveredZone?.zoneIndex ?? null,
             hoveredLayoutId: hoveredZone?.layoutData?.id ?? null,
@@ -268,7 +351,9 @@ export class ExtensionController {
 
         if (zoneIndex === null || zoneIndex === undefined) {
             const trackedInfo = windowTracker.getWindowInfo(window);
-            const wasUntracked = trackedInfo ? windowTracker.untrackWindow(window) : false;
+            const wasUntracked = trackedInfo
+                ? windowTracker.untrackWindow(window, { restore: this._shouldRestoreOnUnsnap() })
+                : false;
 
             this._emitDropDebugSnapshot(
                 wasUntracked ? 'rejected-no-zone-unsnapped' : 'rejected-no-zone',
@@ -299,7 +384,13 @@ export class ExtensionController {
 
         // Use hovered template layout when available.
         const layoutId = hoveredZone?.layoutData?.id ||
-            layoutState.getLayoutForMonitor(monitorIndex) || 'half-split';
+            this._resolveLayoutIdForMonitor(monitorIndex);
+        if (!layoutId) {
+            this._logger.error('No layout available for snap', { monitorIndex, zoneIndex });
+            snapPreviewOverlay.hide();
+            layoutPickerBar.hide();
+            return;
+        }
         const layout = layoutManager.getLayout(layoutId);
 
         if (!layout) {
@@ -632,7 +723,7 @@ export class ExtensionController {
         // Untrack previously snapped windows on this monitor that no longer fit in zone count.
         for (const tracked of windowTracker.getWindowsOnMonitor(monitorIndex)) {
             if (!assigned.has(tracked)) {
-                windowTracker.untrackWindow(tracked);
+                windowTracker.untrackWindow(tracked, { restore: this._shouldRestoreOnUnsnap() });
             }
         }
 
@@ -693,7 +784,10 @@ export class ExtensionController {
         layoutPickerBar.hide();
 
         if (reason === 'shake' && data?.window) {
-            const wasTracked = windowTracker.untrackWindow(data.window);
+            const wasTracked = windowTracker.untrackWindow(
+                data.window,
+                { restore: this._shouldRestoreOnUnsnap() }
+            );
             if (wasTracked) {
                 this._logger.info('Window unsnapped after shake cancel', {
                     windowTitle: data.window?.get_title?.() ?? 'unknown',
@@ -1098,7 +1192,7 @@ export class ExtensionController {
             const centerY = rect.y + rect.height / 2;
             monitorIndex = monitorManager.getMonitorAtPoint(centerX, centerY);
         } else {
-            monitorIndex = monitorManager.getPrimaryMonitor();
+            monitorIndex = monitorManager.getPrimaryMonitorIndex();
         }
 
         // Get all layouts - getAllLayouts returns an array of layout objects
@@ -1164,14 +1258,29 @@ export class ExtensionController {
         const rect = window.get_frame_rect();
         const centerX = rect.x + rect.width / 2;
         const centerY = rect.y + rect.height / 2;
-        const monitorIndex = monitorManager.getMonitorAtPoint(centerX, centerY);
+        const detectedMonitorIndex = monitorManager.getMonitorAtPoint(centerX, centerY);
+        const monitorIndex = detectedMonitorIndex !== -1
+            ? detectedMonitorIndex
+            : monitorManager.getPrimaryMonitorIndex();
 
         const trackedInfo = windowTracker.getWindowInfo(window);
         const trackedInMonitor = trackedInfo && trackedInfo.monitorIndex === monitorIndex;
-        const layoutId = trackedInMonitor
+        const trackedLayoutId = trackedInMonitor && trackedInfo?.layoutId &&
+            layoutManager.hasLayout(trackedInfo.layoutId)
             ? trackedInfo.layoutId
-            : (layoutState.getLayoutForMonitor(monitorIndex) ||
-               (this._settings?.get_string('default-layout') || 'grid-2x2'));
+            : null;
+        if (trackedInMonitor && trackedInfo?.layoutId && !trackedLayoutId) {
+            this._logger.warn('Tracked window layout is unavailable, using monitor default', {
+                monitorIndex,
+                layoutId: trackedInfo.layoutId
+            });
+        }
+
+        const layoutId = trackedLayoutId || this._resolveLayoutIdForMonitor(monitorIndex);
+        if (!layoutId) {
+            this._logger.warn('Keyboard move aborted: no layout available', { monitorIndex, command });
+            return;
+        }
 
         const layout = layoutManager.getLayout(layoutId);
         if (!layout) {
@@ -1384,7 +1493,7 @@ export class ExtensionController {
         }
 
         if (evicted && windowTracker.isWindowTracked(evicted)) {
-            windowTracker.untrackWindow(evicted);
+            windowTracker.untrackWindow(evicted, { restore: this._shouldRestoreOnUnsnap() });
         }
 
         return true;
@@ -1506,23 +1615,35 @@ export class ExtensionController {
      * @param {Object} data
      */
     _handleAppearanceSettings(data) {
-        const { settings } = data;
+        const settings = data?.settings || {};
         const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
+        const mouseHandler = this._serviceContainer.get('mouseHandler');
+        const zoneColor = settings.zoneColor ?? settings.zoneBgColor;
+        const zoneHighlightColor = settings.zoneHoverColor ??
+            settings.zoneBorderHoverColor ??
+            settings.zoneHighlightColor;
+        const animationDuration = settings.animationDuration ?? settings.animationSpeed;
 
         // Apply appearance settings to layout picker bar
         layoutPickerBar.updateConfig({
             backgroundColor: settings.overlayBackgroundColor,
             borderRadius: settings.overlayBorderRadius,
-            zoneColor: settings.zoneColor,
-            zoneHoverColor: settings.zoneHoverColor,
+            zoneColor,
+            zoneHoverColor: zoneHighlightColor,
             zoneBorderColor: settings.zoneBorderColor,
-            zoneBorderHoverColor: settings.zoneBorderHoverColor,
+            zoneBorderHoverColor: zoneHighlightColor,
             textColor: settings.textColor,
             activeLayoutBorderColor: settings.activeLayoutBorderColor,
             activeLayoutTextColor: settings.activeLayoutTextColor,
             thumbnailWidth: settings.thumbnailWidth,
             thumbnailHeight: settings.thumbnailHeight,
-            animationDuration: settings.animationDuration
+            animationDuration
+        });
+
+        // Keep edge hitbox span aligned with template sizing updates.
+        mouseHandler.updateConfig({
+            thumbnailWidth: settings.thumbnailWidth,
+            thumbnailHeight: settings.thumbnailHeight
         });
 
         this._logger.info('Appearance settings applied', settings);
@@ -1537,11 +1658,27 @@ export class ExtensionController {
      * @param {Object} data
      */
     _handleBehaviorSettings(data) {
-        const { settings } = data;
+        const settings = data?.settings || {};
+        this._applyBehaviorSettings(settings);
+
+        this._logger.info('Behavior settings applied', settings);
+
+        // Save to GSettings
+        this._saveSettings('behavior', settings);
+    }
+
+    /**
+     * Apply behavior settings to live runtime components.
+     * @private
+     * @param {Object} settings
+     */
+    _applyBehaviorSettings(settings) {
         const mouseHandler = this._serviceContainer.get('mouseHandler');
         const keyboardHandler = this._serviceContainer.get('keyboardHandler');
         const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
         const dragDetector = this._serviceContainer.get('dragDetector');
+        const interactionStateManager = this._serviceContainer.get('interactionStateManager');
+        const dividerSyncManager = this._serviceContainer.get('dividerSyncManager');
 
         // Apply trigger zone settings
         mouseHandler.updateConfig({
@@ -1577,10 +1714,15 @@ export class ExtensionController {
             shakeDirectionChanges: settings.shakeDirectionChanges
         });
 
-        this._logger.info('Behavior settings applied', settings);
+        interactionStateManager.updateDragZoneModifierConfig({
+            autoSnapOnDrag: settings.autoSnapOnDrag,
+            dragZoneModifierDisablesZones: settings.dragZoneModifierDisablesZones,
+            dragZoneModifierKey: settings.dragZoneModifierKey
+        });
 
-        // Save to GSettings
-        this._saveSettings('behavior', settings);
+        dividerSyncManager.updateConfig({
+            liveResizeUpdates: settings.liveResizeUpdates
+        });
     }
 
     /**
@@ -1622,6 +1764,10 @@ export class ExtensionController {
 
             // Load appearance settings
             this._loadAppearanceSettings();
+
+            // Load behavior settings
+            this._loadBehaviorSettingsFromGSettings();
+            this._watchBehaviorSettings();
 
             this._logger.info('Settings loaded from GSettings');
         } catch (error) {
@@ -1744,6 +1890,161 @@ export class ExtensionController {
     }
 
     /**
+     * Load behavior settings from GSettings and apply them to runtime services.
+     * @private
+     */
+    _loadBehaviorSettingsFromGSettings() {
+        try {
+            const toggleOverlayBindings = this._hasSettingsKey('toggle-overlay')
+                ? this._settings.get_strv('toggle-overlay')
+                : [];
+
+            const settings = {
+                triggerEdge: this._hasSettingsKey('trigger-edge')
+                    ? this._settings.get_string('trigger-edge')
+                    : 'top',
+                edgeSize: this._hasSettingsKey('edge-size')
+                    ? this._settings.get_int('edge-size')
+                    : 2,
+                cornerSize: this._hasSettingsKey('corner-size')
+                    ? this._settings.get_int('corner-size')
+                    : 10,
+                enableEdges: this._hasSettingsKey('enable-edges')
+                    ? this._settings.get_boolean('enable-edges')
+                    : true,
+                enableCorners: this._hasSettingsKey('enable-corners')
+                    ? this._settings.get_boolean('enable-corners')
+                    : true,
+                debounceDelay: this._hasSettingsKey('debounce-delay')
+                    ? this._settings.get_int('debounce-delay')
+                    : 100,
+                toggleOverlay: toggleOverlayBindings[0] || '<Super>space',
+                navigateUp: this._hasSettingsKey('navigate-up')
+                    ? this._settings.get_string('navigate-up')
+                    : 'Up',
+                navigateDown: this._hasSettingsKey('navigate-down')
+                    ? this._settings.get_string('navigate-down')
+                    : 'Down',
+                navigateLeft: this._hasSettingsKey('navigate-left')
+                    ? this._settings.get_string('navigate-left')
+                    : 'Left',
+                navigateRight: this._hasSettingsKey('navigate-right')
+                    ? this._settings.get_string('navigate-right')
+                    : 'Right',
+                selectZone: this._hasSettingsKey('select-zone')
+                    ? this._settings.get_string('select-zone')
+                    : 'Return',
+                cancel: this._hasSettingsKey('cancel')
+                    ? this._settings.get_string('cancel')
+                    : 'Escape',
+                autoSnapOnDrag: this._hasSettingsKey('auto-snap-on-drag')
+                    ? this._settings.get_boolean('auto-snap-on-drag')
+                    : true,
+                restoreOnUnsnap: this._hasSettingsKey('restore-on-unsnap')
+                    ? this._settings.get_boolean('restore-on-unsnap')
+                    : true,
+                dragZoneModifierDisablesZones: this._hasSettingsKey('drag-zone-modifier-disables-zones')
+                    ? this._settings.get_boolean('drag-zone-modifier-disables-zones')
+                    : true,
+                dragZoneModifierKey: this._hasSettingsKey('drag-zone-modifier-key')
+                    ? this._settings.get_string('drag-zone-modifier-key')
+                    : 'control',
+                shakeEnabled: this._hasSettingsKey('shake-enabled')
+                    ? this._settings.get_boolean('shake-enabled')
+                    : true,
+                shakeWindowMs: this._hasSettingsKey('shake-window-ms')
+                    ? this._settings.get_int('shake-window-ms')
+                    : 500,
+                shakeMinDelta: this._hasSettingsKey('shake-min-delta')
+                    ? this._settings.get_int('shake-min-delta')
+                    : 35,
+                shakeDirectionChanges: this._hasSettingsKey('shake-direction-changes')
+                    ? this._settings.get_int('shake-direction-changes')
+                    : 4,
+                liveResizeUpdates: this._hasSettingsKey('live-resize-updates')
+                    ? this._settings.get_boolean('live-resize-updates')
+                    : true
+            };
+
+            this._applyBehaviorSettings(settings);
+            this._logger.info('Loaded behavior settings from GSettings', {
+                triggerEdge: settings.triggerEdge,
+                autoSnapOnDrag: settings.autoSnapOnDrag,
+                dragZoneModifierDisablesZones: settings.dragZoneModifierDisablesZones,
+                dragZoneModifierKey: settings.dragZoneModifierKey,
+                shakeEnabled: settings.shakeEnabled,
+                liveResizeUpdates: settings.liveResizeUpdates
+            });
+        } catch (error) {
+            this._logger.error('Failed to load behavior settings', { error });
+        }
+    }
+
+    /**
+     * Watch behavior settings for live updates.
+     * @private
+     */
+    _watchBehaviorSettings() {
+        if (!this._settings || this._settingsSignalIds.length > 0) {
+            return;
+        }
+
+        const keys = [
+            'trigger-edge',
+            'edge-size',
+            'corner-size',
+            'enable-edges',
+            'enable-corners',
+            'debounce-delay',
+            'toggle-overlay',
+            'navigate-up',
+            'navigate-down',
+            'navigate-left',
+            'navigate-right',
+            'select-zone',
+            'cancel',
+            'auto-snap-on-drag',
+            'restore-on-unsnap',
+            'drag-zone-modifier-disables-zones',
+            'drag-zone-modifier-key',
+            'shake-enabled',
+            'shake-window-ms',
+            'shake-min-delta',
+            'shake-direction-changes',
+            'live-resize-updates'
+        ];
+
+        for (const key of keys) {
+            if (!this._hasSettingsKey(key)) {
+                continue;
+            }
+
+            const signalId = this._settings.connect(`changed::${key}`, () => {
+                this._loadBehaviorSettingsFromGSettings();
+            });
+            this._settingsSignalIds.push(signalId);
+        }
+    }
+
+    /**
+     * Determine whether windows should restore geometry when unsnapped.
+     * @private
+     * @returns {boolean}
+     */
+    _shouldRestoreOnUnsnap() {
+        if (!this._settings || !this._hasSettingsKey('restore-on-unsnap')) {
+            return true;
+        }
+
+        try {
+            return this._settings.get_boolean('restore-on-unsnap');
+        } catch (error) {
+            this._logger.warn('Failed reading restore-on-unsnap setting, using default', { error });
+            return true;
+        }
+    }
+
+    /**
      * Save settings to GSettings
      * @private
      * @param {string} category
@@ -1811,20 +2112,44 @@ export class ExtensionController {
      * @param {Object} settings
      */
     _saveAppearanceSettings(settings) {
-        if (settings.zoneBgColor) {
-            this._settings.set_string('zone-bg-color', settings.zoneBgColor);
+        const zoneBgColor = settings.zoneBgColor ?? settings.zoneColor;
+        const zoneHighlightColor = settings.zoneHighlightColor ??
+            settings.zoneHoverColor ??
+            settings.zoneBorderHoverColor;
+
+        if (zoneBgColor) {
+            this._settings.set_string('zone-bg-color', zoneBgColor);
         }
         if (settings.zoneBorderColor) {
             this._settings.set_string('zone-border-color', settings.zoneBorderColor);
         }
-        if (settings.zoneHighlightColor) {
-            this._settings.set_string('zone-highlight-color', settings.zoneHighlightColor);
+        if (zoneHighlightColor) {
+            this._settings.set_string('zone-highlight-color', zoneHighlightColor);
         }
         if (settings.activeLayoutBorderColor) {
             this._settings.set_string('active-layout-border-color', settings.activeLayoutBorderColor);
         }
         if (settings.activeLayoutTextColor) {
             this._settings.set_string('active-layout-text-color', settings.activeLayoutTextColor);
+        }
+        if (typeof settings.borderWidth === 'number') {
+            this._settings.set_int('border-width', Math.max(1, Math.round(settings.borderWidth)));
+        }
+        if (typeof settings.animationSpeed === 'number' || typeof settings.animationDuration === 'number') {
+            const value = settings.animationSpeed ?? settings.animationDuration;
+            this._settings.set_int('animation-speed', Math.max(1, Math.round(value)));
+        }
+        if (typeof settings.enableAnimations === 'boolean') {
+            this._settings.set_boolean('enable-animations', settings.enableAnimations);
+        }
+        if (typeof settings.overlayOpacity === 'number') {
+            this._settings.set_double('overlay-opacity', Math.max(0, Math.min(1, settings.overlayOpacity)));
+        }
+        if (typeof settings.zoneLabelSize === 'number') {
+            this._settings.set_int('zone-label-size', Math.max(1, Math.round(settings.zoneLabelSize)));
+        }
+        if (typeof settings.showZoneNumbers === 'boolean') {
+            this._settings.set_boolean('show-zone-numbers', settings.showZoneNumbers);
         }
         this._logger.debug('Appearance settings saved');
     }
@@ -1835,9 +2160,84 @@ export class ExtensionController {
      * @param {Object} settings
      */
     _saveBehaviorSettings(settings) {
-        // Save behavior settings to GSettings
-        if (settings.triggerEdge) {
+        if (settings.triggerEdge && this._hasSettingsKey('trigger-edge')) {
             this._settings.set_string('trigger-edge', settings.triggerEdge);
+        }
+        if (typeof settings.edgeSize === 'number' && this._hasSettingsKey('edge-size')) {
+            this._settings.set_int('edge-size', Math.max(1, Math.round(settings.edgeSize)));
+        }
+        if (typeof settings.cornerSize === 'number' && this._hasSettingsKey('corner-size')) {
+            this._settings.set_int('corner-size', Math.max(1, Math.round(settings.cornerSize)));
+        }
+        if (typeof settings.enableEdges === 'boolean' && this._hasSettingsKey('enable-edges')) {
+            this._settings.set_boolean('enable-edges', settings.enableEdges);
+        }
+        if (typeof settings.enableCorners === 'boolean' && this._hasSettingsKey('enable-corners')) {
+            this._settings.set_boolean('enable-corners', settings.enableCorners);
+        }
+        if (typeof settings.debounceDelay === 'number' && this._hasSettingsKey('debounce-delay')) {
+            this._settings.set_int('debounce-delay', Math.max(0, Math.round(settings.debounceDelay)));
+        }
+        if (settings.toggleOverlay && this._hasSettingsKey('toggle-overlay')) {
+            this._settings.set_strv('toggle-overlay', [settings.toggleOverlay]);
+        }
+        if (settings.navigateUp && this._hasSettingsKey('navigate-up')) {
+            this._settings.set_string('navigate-up', settings.navigateUp);
+        }
+        if (settings.navigateDown && this._hasSettingsKey('navigate-down')) {
+            this._settings.set_string('navigate-down', settings.navigateDown);
+        }
+        if (settings.navigateLeft && this._hasSettingsKey('navigate-left')) {
+            this._settings.set_string('navigate-left', settings.navigateLeft);
+        }
+        if (settings.navigateRight && this._hasSettingsKey('navigate-right')) {
+            this._settings.set_string('navigate-right', settings.navigateRight);
+        }
+        if (settings.selectZone && this._hasSettingsKey('select-zone')) {
+            this._settings.set_string('select-zone', settings.selectZone);
+        }
+        if (settings.cancel && this._hasSettingsKey('cancel')) {
+            this._settings.set_string('cancel', settings.cancel);
+        }
+        if (typeof settings.autoSnapOnDrag === 'boolean' &&
+            this._hasSettingsKey('auto-snap-on-drag')) {
+            this._settings.set_boolean('auto-snap-on-drag', settings.autoSnapOnDrag);
+        }
+        if (typeof settings.focusWindowOnSnap === 'boolean' &&
+            this._hasSettingsKey('focus-window-on-snap')) {
+            this._settings.set_boolean('focus-window-on-snap', settings.focusWindowOnSnap);
+        }
+        if (typeof settings.restoreOnUnsnap === 'boolean' &&
+            this._hasSettingsKey('restore-on-unsnap')) {
+            this._settings.set_boolean('restore-on-unsnap', settings.restoreOnUnsnap);
+        }
+        if (typeof settings.dragZoneModifierDisablesZones === 'boolean' &&
+            this._hasSettingsKey('drag-zone-modifier-disables-zones')) {
+            this._settings.set_boolean('drag-zone-modifier-disables-zones', settings.dragZoneModifierDisablesZones);
+        }
+        if (settings.dragZoneModifierKey &&
+            this._hasSettingsKey('drag-zone-modifier-key')) {
+            this._settings.set_string('drag-zone-modifier-key', settings.dragZoneModifierKey);
+        }
+        if (typeof settings.shakeEnabled === 'boolean' &&
+            this._hasSettingsKey('shake-enabled')) {
+            this._settings.set_boolean('shake-enabled', settings.shakeEnabled);
+        }
+        if (typeof settings.shakeWindowMs === 'number' &&
+            this._hasSettingsKey('shake-window-ms')) {
+            this._settings.set_int('shake-window-ms', Math.max(100, Math.round(settings.shakeWindowMs)));
+        }
+        if (typeof settings.shakeMinDelta === 'number' &&
+            this._hasSettingsKey('shake-min-delta')) {
+            this._settings.set_int('shake-min-delta', Math.max(5, Math.round(settings.shakeMinDelta)));
+        }
+        if (typeof settings.shakeDirectionChanges === 'number' &&
+            this._hasSettingsKey('shake-direction-changes')) {
+            this._settings.set_int('shake-direction-changes', Math.max(1, Math.round(settings.shakeDirectionChanges)));
+        }
+        if (typeof settings.liveResizeUpdates === 'boolean' &&
+            this._hasSettingsKey('live-resize-updates')) {
+            this._settings.set_boolean('live-resize-updates', settings.liveResizeUpdates);
         }
         this._logger.debug('Behavior settings saved');
     }
@@ -1960,6 +2360,17 @@ export class ExtensionController {
         if (this._serviceContainer) {
             this._serviceContainer = null;
         }
+
+        if (this._settings) {
+            for (const signalId of this._settingsSignalIds) {
+                try {
+                    this._settings.disconnect(signalId);
+                } catch (_error) {
+                    // Settings may already be torn down.
+                }
+            }
+        }
+        this._settingsSignalIds = [];
 
         // Clear settings
         this._settings = null;

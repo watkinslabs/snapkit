@@ -17,7 +17,9 @@ import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import { computeLayoutPickerMetrics } from '../core/layoutPickerMetrics.js';
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 import { State } from '../state/extensionState.js';
 
 export class MouseHandler {
@@ -52,9 +54,10 @@ export class MouseHandler {
         this._overlayMetrics = {
             thumbnailWidth: 120,
             thumbnailHeight: 80,
-            labelHeight: 20,
+            padding: 8,
             spacing: 12,
-            barPadding: 16
+            barPadding: 16,
+            edgeOffset: 8
         };
 
         // State
@@ -78,6 +81,7 @@ export class MouseHandler {
 
         // Create hot edge actors for each monitor
         this._createEdgeActors();
+        this._setEdgeActorsReactive(this._extensionState.current === State.CLOSED);
 
         // Subscribe to state changes
         this._extensionState.subscribe((oldState, newState) => {
@@ -116,6 +120,7 @@ export class MouseHandler {
             );
         }
 
+        this._setEdgeActorsReactive(this._extensionState.current === State.CLOSED);
         this._logger.debug('Created edge actor', { edge, count: this._edgeActors.length });
     }
 
@@ -128,16 +133,13 @@ export class MouseHandler {
      */
     _estimateOverlaySpan(edge, geometry) {
         const count = this._getLayoutCount();
-        const { thumbnailWidth, thumbnailHeight, labelHeight, spacing, barPadding } = this._overlayMetrics;
-
-        if (edge === 'top' || edge === 'bottom') {
-            const rawWidth = count * thumbnailWidth + Math.max(0, count - 1) * spacing + barPadding * 2;
-            return Math.min(geometry.width, rawWidth);
-        }
-
-        const itemHeight = thumbnailHeight + labelHeight;
-        const rawHeight = count * itemHeight + Math.max(0, count - 1) * spacing + barPadding * 2;
-        return Math.min(geometry.height, rawHeight);
+        const metrics = computeLayoutPickerMetrics({
+            monitorGeometry: geometry,
+            edge,
+            layoutCount: count,
+            config: this._overlayMetrics
+        });
+        return metrics.edgeSpan;
     }
 
     /**
@@ -218,15 +220,25 @@ export class MouseHandler {
             opacity: 0  // Invisible
         });
 
-        actor.connect('enter-event', () => {
-            this._onEdgeEnter(edge, monitorIndex);
-            return Clutter.EVENT_STOP;
-        });
+        actor.connect('enter-event', safeCallback(
+            this._logger,
+            `edge-enter (${edge}:${monitorIndex})`,
+            () => {
+                this._onEdgeEnter(edge, monitorIndex);
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
 
-        actor.connect('leave-event', () => {
-            this._onEdgeLeave();
-            return Clutter.EVENT_STOP;
-        });
+        actor.connect('leave-event', safeCallback(
+            this._logger,
+            `edge-leave (${edge}:${monitorIndex})`,
+            () => {
+                this._onEdgeLeave();
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
 
         Main.layoutManager.addChrome(actor, {
             affectsInputRegion: true,
@@ -247,6 +259,18 @@ export class MouseHandler {
             actor.destroy();
         }
         this._edgeActors = [];
+    }
+
+    /**
+     * Toggle edge actor reactivity to avoid intercepting pointer input
+     * while overlay/drag states are active.
+     * @private
+     * @param {boolean} reactive
+     */
+    _setEdgeActorsReactive(reactive) {
+        for (const actor of this._edgeActors) {
+            actor.reactive = !!reactive;
+        }
     }
 
     /**
@@ -500,6 +524,7 @@ export class MouseHandler {
         if (newState !== State.CLOSED) {
             this._currentZone = null;
         }
+        this._setEdgeActorsReactive(newState === State.CLOSED);
     }
 
     /**
@@ -533,6 +558,48 @@ export class MouseHandler {
             const validEdges = ['top', 'bottom', 'left', 'right'];
             if (validEdges.includes(config.triggerEdge) && this._config.triggerEdge !== config.triggerEdge) {
                 this._config.triggerEdge = config.triggerEdge;
+                needsEdgeRecreate = true;
+            }
+        }
+        if (config.thumbnailWidth !== undefined) {
+            const thumbnailWidth = Math.max(1, config.thumbnailWidth);
+            if (this._overlayMetrics.thumbnailWidth !== thumbnailWidth) {
+                this._overlayMetrics.thumbnailWidth = thumbnailWidth;
+                needsEdgeRecreate = true;
+            }
+        }
+        if (config.thumbnailHeight !== undefined) {
+            const thumbnailHeight = Math.max(1, config.thumbnailHeight);
+            if (this._overlayMetrics.thumbnailHeight !== thumbnailHeight) {
+                this._overlayMetrics.thumbnailHeight = thumbnailHeight;
+                needsEdgeRecreate = true;
+            }
+        }
+        if (config.padding !== undefined) {
+            const padding = Math.max(0, config.padding);
+            if (this._overlayMetrics.padding !== padding) {
+                this._overlayMetrics.padding = padding;
+                needsEdgeRecreate = true;
+            }
+        }
+        if (config.spacing !== undefined) {
+            const spacing = Math.max(0, config.spacing);
+            if (this._overlayMetrics.spacing !== spacing) {
+                this._overlayMetrics.spacing = spacing;
+                needsEdgeRecreate = true;
+            }
+        }
+        if (config.barPadding !== undefined) {
+            const barPadding = Math.max(0, config.barPadding);
+            if (this._overlayMetrics.barPadding !== barPadding) {
+                this._overlayMetrics.barPadding = barPadding;
+                needsEdgeRecreate = true;
+            }
+        }
+        if (config.edgeOffset !== undefined) {
+            const edgeOffset = Math.max(0, config.edgeOffset);
+            if (this._overlayMetrics.edgeOffset !== edgeOffset) {
+                this._overlayMetrics.edgeOffset = edgeOffset;
                 needsEdgeRecreate = true;
             }
         }

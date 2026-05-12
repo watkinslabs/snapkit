@@ -27,6 +27,8 @@ export class Logger {
     static _enableTimestamps = true;
     static _enableContext = true;
     static _enabled = DEBUG_LOGGING_ENABLED;
+    static _alwaysLogErrors = true;
+    static _forwardErrorsToShell = true;
 
     /**
      * Set global log level
@@ -62,6 +64,24 @@ export class Logger {
      */
     static setEnabled(enabled) {
         Logger._enabled = Boolean(enabled);
+    }
+
+    /**
+     * Force error-level logs even when debug/info logging is disabled.
+     *
+     * @param {boolean} enabled
+     */
+    static setAlwaysLogErrors(enabled) {
+        Logger._alwaysLogErrors = Boolean(enabled);
+    }
+
+    /**
+     * Forward errors to GNOME Shell's global error logger when available.
+     *
+     * @param {boolean} enabled
+     */
+    static setForwardErrorsToShell(enabled) {
+        Logger._forwardErrorsToShell = Boolean(enabled);
     }
 
     /**
@@ -191,8 +211,36 @@ export class Logger {
      * @param {*} data - Error or additional data
      */
     error(message, data) {
-        if (Logger._enabled && this._getLevel() <= LogLevel.ERROR) {
-            console.error(this._format('ERROR', message, data));
+        if (this._getLevel() > LogLevel.ERROR) {
+            return;
+        }
+
+        const formatted = this._format('ERROR', message, data);
+        if (Logger._enabled || Logger._alwaysLogErrors) {
+            console.error(formatted);
+        }
+
+        if (!Logger._forwardErrorsToShell) {
+            return;
+        }
+
+        let error = null;
+        if (data instanceof Error) {
+            error = data;
+        } else if (data && typeof data === 'object' && data.error instanceof Error) {
+            error = data.error;
+        }
+
+        if (!error) {
+            return;
+        }
+
+        try {
+            if (typeof globalThis.logError === 'function') {
+                globalThis.logError(error, `[SnapKit][${this._context}] ${message}`);
+            }
+        } catch (_e) {
+            // Never throw from logger path.
         }
     }
 

@@ -57,6 +57,7 @@ export class BehaviorPreferences {
             autoSnapOnDrag: true,
             focusWindowOnSnap: true,
             restoreOnUnsnap: true,
+            liveResizeUpdates: true,
 
             // Shake-to-exit snap
             shakeEnabled: true,
@@ -220,6 +221,7 @@ export class BehaviorPreferences {
 
         // Restore on unsnap
         this._createToggleRow(section, 'Restore Size on Unsnap', 'restoreOnUnsnap', this._settings.restoreOnUnsnap);
+        this._createToggleRow(section, 'Live Divider Resize Updates', 'liveResizeUpdates', this._settings.liveResizeUpdates);
     }
 
     /**

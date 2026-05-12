@@ -21,6 +21,8 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import { Logger } from '../core/logger.js';
+import { computeLayoutPickerMetrics } from '../core/layoutPickerMetrics.js';
+import { safeCallback } from '../core/safeCallback.js';
 
 export class LayoutPickerBar {
     /**
@@ -59,6 +61,9 @@ export class LayoutPickerBar {
             edgeOffset: 8,                            // Distance from monitor edge when fully expanded
             edgePeekSize: 18,                         // Visible pixels during edge peek reveal
             edgePeekOpacity: 180,                     // Initial opacity during edge peek reveal
+            hideDelay: 300,                           // Standard hide delay after pointer leaves bar
+            edgeTransferGraceMs: 450,                 // Grace window after reveal animation starts
+            edgeTransferHideDelay: 800,               // Hide delay during edge->bar transfer
             // Appearance settings
             backgroundColor: 'rgba(30, 30, 30, 0.95)',
             borderRadius: 12,
@@ -83,6 +88,8 @@ export class LayoutPickerBar {
         this._idleSourceId = null;
         this._pinnedOpen = false;
         this._lastHoverDebugKey = null;
+        this._renderMetrics = null;
+        this._lastShownAt = 0;
     }
 
     /**
@@ -101,12 +108,7 @@ export class LayoutPickerBar {
         this._container = new St.BoxLayout({
             name: 'snapkit-layout-picker-bar',
             style_class: 'snapkit-layout-picker-bar',
-            style: `
-                background-color: rgba(30, 30, 30, 0.95);
-                border-radius: 12px;
-                padding: ${this._config.barPadding}px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-            `,
+            style: '',
             vertical: false,
             reactive: true,
             visible: false,
@@ -121,15 +123,27 @@ export class LayoutPickerBar {
         this._container.add_child(this._layoutsBox);
 
         // Connect signals
-        this._container.connect('enter-event', () => {
-            this._onBarEnter();
-            return Clutter.EVENT_PROPAGATE;
-        });
+        this._container.connect('enter-event', safeCallback(
+            this._logger,
+            'layout-picker-bar enter-event',
+            () => {
+                this._onBarEnter();
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
 
-        this._container.connect('leave-event', () => {
-            this._onBarLeave();
-            return Clutter.EVENT_PROPAGATE;
-        });
+        this._container.connect('leave-event', safeCallback(
+            this._logger,
+            'layout-picker-bar leave-event',
+            () => {
+                this._onBarLeave();
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
+
+        this._applyContainerStyle(this._config.barPadding);
 
         // Add to parent
         parent.add_child(this._container);
@@ -146,6 +160,42 @@ export class LayoutPickerBar {
 
         this._container.vertical = isVertical;
         this._layoutsBox.vertical = isVertical;
+    }
+
+    /**
+     * Apply container visual style.
+     * @private
+     * @param {number} barPadding
+     */
+    _applyContainerStyle(barPadding = this._config.barPadding) {
+        if (!this._container) {
+            return;
+        }
+
+        this._container.set_style(`
+            background-color: ${this._config.backgroundColor};
+            border-radius: ${this._config.borderRadius}px;
+            padding: ${Math.max(0, Math.floor(barPadding))}px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        `);
+    }
+
+    /**
+     * Compute render metrics for current monitor/edge/layout set.
+     * @private
+     * @param {number} layoutCount
+     * @returns {Object}
+     */
+    _computeRenderMetrics(layoutCount) {
+        const monitor = this._monitorManager.getMonitor(this._monitorIndex);
+        const geometry = monitor?.geometry || { width: 1920, height: 1080 };
+
+        return computeLayoutPickerMetrics({
+            monitorGeometry: geometry,
+            edge: this._config.edge,
+            layoutCount,
+            config: this._config
+        });
     }
 
     /**
@@ -166,8 +216,17 @@ export class LayoutPickerBar {
         // Update orientation based on edge
         this._updateOrientation();
 
+        const layouts = this._getAvailableLayouts();
+        this._renderMetrics = this._computeRenderMetrics(layouts.length);
+        this._lastShownAt = Date.now();
+
+        this._applyContainerStyle(this._renderMetrics.barPadding);
+        if (this._layoutsBox) {
+            this._layoutsBox.set_style(`spacing: ${this._renderMetrics.spacing}px;`);
+        }
+
         // Build layout widgets
-        this._buildLayoutWidgets();
+        this._buildLayoutWidgets(layouts);
 
         // Make visible but transparent so we can measure size
         this._container.opacity = 0;
@@ -239,6 +298,8 @@ export class LayoutPickerBar {
         this._pinnedOpen = false;
         this._hoveredZone = null;
         this._hoveredLayoutIndex = null;
+        this._lastShownAt = 0;
+        this._renderMetrics = null;
         this._logger.debug('Layout picker bar hidden');
 
         // Emit event
@@ -249,16 +310,20 @@ export class LayoutPickerBar {
      * Build layout widgets for all available layouts
      * @private
      */
-    _buildLayoutWidgets() {
+    _buildLayoutWidgets(layouts = null) {
         this._clearLayoutWidgets();
 
-        const layouts = this._getAvailableLayouts();
-        const activeLayoutIndex = layouts.findIndex(layout => layout.id === this._activeLayoutId);
+        const availableLayouts = layouts || this._getAvailableLayouts();
+        if (!this._renderMetrics) {
+            this._renderMetrics = this._computeRenderMetrics(availableLayouts.length);
+        }
+
+        const activeLayoutIndex = availableLayouts.findIndex(layout => layout.id === this._activeLayoutId);
         this._selectedLayoutIndex = activeLayoutIndex >= 0 ? activeLayoutIndex : 0;
         this._selectedZoneIndex = 0;
 
-        for (let i = 0; i < layouts.length; i++) {
-            const layoutData = layouts[i];
+        for (let i = 0; i < availableLayouts.length; i++) {
+            const layoutData = availableLayouts[i];
             const widgetData = this._createLayoutWidget(layoutData, i);
             this._layoutsBox.add_child(widgetData.widget);
             this._layoutWidgets.push({
@@ -270,7 +335,7 @@ export class LayoutPickerBar {
 
         this._applyTemplateSelectionStyles();
         this._logger.debug('Built layout widgets', {
-            count: layouts.length,
+            count: availableLayouts.length,
             layoutOrder: this._layoutWidgets.map((item, index) => ({
                 index,
                 id: item.layoutData?.id,
@@ -331,12 +396,18 @@ export class LayoutPickerBar {
      * @returns {{widget: St.Widget, zones: St.Button[]}}
      */
     _createLayoutWidget(layoutData, layoutIndex) {
-        const { thumbnailWidth, thumbnailHeight, padding } = this._config;
+        const metrics = this._renderMetrics || {};
+        const thumbnailWidth = metrics.thumbnailWidth || this._config.thumbnailWidth;
+        const thumbnailHeight = metrics.thumbnailHeight || this._config.thumbnailHeight;
+        const resolverPadding = metrics.resolverPadding ?? (this._config.padding / 4);
+        const labelGap = metrics.labelGap ?? 6;
+        const labelFontSize = metrics.labelFontSize || 11;
+        const showLabels = metrics.showLabels !== false;
 
         // Container for layout
         const container = new St.BoxLayout({
             vertical: true,
-            style: 'spacing: 6px;',
+            style: `spacing: ${labelGap}px;`,
             reactive: true
         });
 
@@ -348,11 +419,16 @@ export class LayoutPickerBar {
             reactive: true
         });
         container._thumbnailActor = thumbnail;
-        thumbnail.connect('motion-event', (_actor, event) => {
-            const [x, y] = event.get_coords();
-            this.highlightZoneAtCursor(x, y);
-            return Clutter.EVENT_PROPAGATE;
-        });
+        thumbnail.connect('motion-event', safeCallback(
+            this._logger,
+            `layout-thumbnail motion-event (${layoutData.id})`,
+            (_actor, event) => {
+                const [x, y] = event.get_coords();
+                this.highlightZoneAtCursor(x, y);
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
 
         // Resolve layout zones for thumbnail size
         const workArea = {
@@ -367,7 +443,7 @@ export class LayoutPickerBar {
         try {
             const zones = this._layoutResolver.resolve(layoutData.layout, workArea, {
                 margin: 0,
-                padding: padding / 4 // Scale padding for thumbnail
+                padding: resolverPadding
             });
 
             // Create clickable zone widgets
@@ -389,18 +465,22 @@ export class LayoutPickerBar {
         container.add_child(thumbnail);
 
         // Layout name label
-        const label = new St.Label({
-            text: layoutData.name,
-            style: `
-                color: ${this._config.textColor};
-                font-size: 11px;
-                font-weight: 500;
-                text-align: center;
-            `,
-            x_align: Clutter.ActorAlign.CENTER
-        });
-        container._labelActor = label;
-        container.add_child(label);
+        if (showLabels) {
+            const label = new St.Label({
+                text: layoutData.name,
+                style: `
+                    color: ${this._config.textColor};
+                    font-size: ${labelFontSize}px;
+                    font-weight: 500;
+                    text-align: center;
+                `,
+                x_align: Clutter.ActorAlign.CENTER
+            });
+            container._labelActor = label;
+            container.add_child(label);
+        } else {
+            container._labelActor = null;
+        }
 
         return { widget: container, zones: zoneWidgets };
     }
@@ -431,20 +511,36 @@ export class LayoutPickerBar {
         zoneWidget._zoneIndex = zoneIndex;
 
         // Hover handlers
-        zoneWidget.connect('enter-event', () => {
-            this._onZoneEnter(zoneWidget, layoutData, layoutIndex, zoneIndex);
-            return Clutter.EVENT_PROPAGATE;
-        });
+        zoneWidget.connect('enter-event', safeCallback(
+            this._logger,
+            `zone enter-event (${layoutData.id}:${zoneIndex})`,
+            () => {
+                this._onZoneEnter(zoneWidget, layoutData, layoutIndex, zoneIndex);
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
 
-        zoneWidget.connect('leave-event', () => {
-            this._onZoneLeave(zoneWidget);
-            return Clutter.EVENT_PROPAGATE;
-        });
+        zoneWidget.connect('leave-event', safeCallback(
+            this._logger,
+            `zone leave-event (${layoutData.id}:${zoneIndex})`,
+            () => {
+                this._onZoneLeave(zoneWidget);
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
 
         // Click handler
-        zoneWidget.connect('clicked', () => {
-            this._onZoneClicked(layoutData, zoneIndex);
-        });
+        zoneWidget.connect('clicked', safeCallback(
+            this._logger,
+            `zone clicked (${layoutData.id}:${zoneIndex})`,
+            () => {
+                this._onZoneClicked(layoutData, zoneIndex);
+                return undefined;
+            },
+            undefined
+        ));
 
         return zoneWidget;
     }
@@ -708,20 +804,25 @@ export class LayoutPickerBar {
         if (this._pinnedOpen) {
             return;
         }
-        // Start delayed hide
-        this._startHideTimeout();
+        const now = Date.now();
+        const elapsedSinceShow = this._lastShownAt > 0 ? now - this._lastShownAt : Number.POSITIVE_INFINITY;
+        const delay = elapsedSinceShow <= this._config.edgeTransferGraceMs
+            ? this._config.edgeTransferHideDelay
+            : this._config.hideDelay;
+
+        this._startHideTimeout(delay);
     }
 
     /**
      * Start delayed hide timeout
      * @private
      */
-    _startHideTimeout() {
+    _startHideTimeout(delayMs = this._config.hideDelay) {
         if (this._pinnedOpen) {
             return;
         }
         this._cancelHideTimeout();
-        this._hideTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+        this._hideTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(0, delayMs), () => {
             this._hideTimeoutId = null;
             this.hide();
             return GLib.SOURCE_REMOVE;
@@ -809,6 +910,25 @@ export class LayoutPickerBar {
                     ? geometry.y - barHeight + edgePeekSize
                     : geometry.y + edgeOffset;
         }
+
+        const clampedX = Math.max(
+            geometry.x,
+            Math.min(x, geometry.x + Math.max(0, geometry.width - barWidth))
+        );
+        const clampedY = Math.max(
+            geometry.y,
+            Math.min(y, geometry.y + Math.max(0, geometry.height - barHeight))
+        );
+
+        if (mode === 'peek') {
+            if (this._config.edge === 'top' || this._config.edge === 'bottom') {
+                return { x: clampedX, y };
+            }
+            return { x, y: clampedY };
+        }
+
+        x = clampedX;
+        y = clampedY;
 
         return { x, y };
     }
@@ -943,6 +1063,8 @@ export class LayoutPickerBar {
     }
 
     _applyTemplateSelectionStyles() {
+        const labelFontSize = this._renderMetrics?.labelFontSize || 11;
+
         for (let i = 0; i < this._layoutWidgets.length; i++) {
             const item = this._layoutWidgets[i];
             const container = item?.widget;
@@ -961,7 +1083,7 @@ export class LayoutPickerBar {
                 if (label) {
                     label.set_style(`
                         color: ${this._config.activeLayoutTextColor};
-                        font-size: 11px;
+                        font-size: ${labelFontSize}px;
                         font-weight: 700;
                         text-align: center;
                     `);
@@ -971,7 +1093,7 @@ export class LayoutPickerBar {
                 if (label) {
                     label.set_style(`
                         color: rgba(255, 255, 255, 0.96);
-                        font-size: 11px;
+                        font-size: ${labelFontSize}px;
                         font-weight: 600;
                         text-align: center;
                     `);
@@ -981,7 +1103,7 @@ export class LayoutPickerBar {
                 if (label) {
                     label.set_style(`
                         color: ${this._config.textColor};
-                        font-size: 11px;
+                        font-size: ${labelFontSize}px;
                         font-weight: 500;
                         text-align: center;
                     `);
@@ -1030,6 +1152,15 @@ export class LayoutPickerBar {
         if (config.thumbnailHeight) {
             this._config.thumbnailHeight = config.thumbnailHeight;
         }
+        if (config.padding !== undefined) {
+            this._config.padding = Math.max(0, config.padding);
+        }
+        if (config.spacing !== undefined) {
+            this._config.spacing = Math.max(0, config.spacing);
+        }
+        if (config.barPadding !== undefined) {
+            this._config.barPadding = Math.max(0, config.barPadding);
+        }
         if (config.animationDuration !== undefined) {
             this._config.animationDuration = config.animationDuration;
         }
@@ -1074,12 +1205,10 @@ export class LayoutPickerBar {
 
         // Update container style if initialized
         if (this._container) {
-            this._container.set_style(`
-                background-color: ${this._config.backgroundColor};
-                border-radius: ${this._config.borderRadius}px;
-                padding: ${this._config.barPadding}px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-            `);
+            this._applyContainerStyle(this._renderMetrics?.barPadding ?? this._config.barPadding);
+        }
+        if (this._layoutsBox) {
+            this._layoutsBox.set_style(`spacing: ${this._renderMetrics?.spacing ?? this._config.spacing}px;`);
         }
 
         this._logger.debug('Configuration updated', this._config);

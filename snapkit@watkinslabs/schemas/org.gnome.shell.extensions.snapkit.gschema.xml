@@ -276,6 +276,51 @@
       <description>Restore window size when unsnapping from a zone</description>
     </key>
 
+    <key name="drag-zone-modifier-disables-zones" type="b">
+      <default>true</default>
+      <summary>Modifier disables zones while dragging</summary>
+      <description>When enabled, holding the drag modifier disables zone snapping. When disabled, zones are inactive unless the modifier is held.</description>
+    </key>
+
+    <key name="drag-zone-modifier-key" type="s">
+      <default>'control'</default>
+      <summary>Drag zone modifier key</summary>
+      <description>Modifier key used to toggle zone snapping while dragging (control, shift, alt, super)</description>
+    </key>
+
+    <key name="live-resize-updates" type="b">
+      <default>true</default>
+      <summary>Live resize updates</summary>
+      <description>Update snapped layout continuously while dragging a divider resize handle</description>
+    </key>
+
+    <key name="shake-enabled" type="b">
+      <default>true</default>
+      <summary>Enable shake to exit</summary>
+      <description>Allow shake gesture during drag to cancel snapping mode</description>
+    </key>
+
+    <key name="shake-window-ms" type="i">
+      <default>500</default>
+      <range min="100" max="2000"/>
+      <summary>Shake window duration</summary>
+      <description>Time window for detecting shake gesture in milliseconds</description>
+    </key>
+
+    <key name="shake-min-delta" type="i">
+      <default>35</default>
+      <range min="5" max="150"/>
+      <summary>Shake minimum delta</summary>
+      <description>Minimum horizontal movement per shake sample in pixels</description>
+    </key>
+
+    <key name="shake-direction-changes" type="i">
+      <default>4</default>
+      <range min="1" max="10"/>
+      <summary>Shake direction changes</summary>
+      <description>Direction changes required to trigger shake cancellation</description>
+    </key>
+
     <!-- Layout Settings -->
     <key name="default-layout" type="s">
       <default>'grid-2x2'</default>

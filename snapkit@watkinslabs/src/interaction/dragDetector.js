@@ -16,6 +16,7 @@ import Meta from 'gi://Meta';
 import GLib from 'gi://GLib';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 import { State } from '../state/extensionState.js';
 
 export class DragDetector {
@@ -68,15 +69,27 @@ export class DragDetector {
         }
 
         // Connect to grab-op-begin signal
-        const grabBeginId = global.display.connect('grab-op-begin', (display, window, op) => {
-            this._onGrabOpBegin(display, window, op);
-        });
+        const grabBeginId = global.display.connect('grab-op-begin', safeCallback(
+            this._logger,
+            'display grab-op-begin',
+            (display, window, op) => {
+                this._onGrabOpBegin(display, window, op);
+                return undefined;
+            },
+            undefined
+        ));
         this._signalIds.push({ object: global.display, id: grabBeginId });
 
         // Connect to grab-op-end signal
-        const grabEndId = global.display.connect('grab-op-end', (display, window, op) => {
-            this._onGrabOpEnd(display, window, op);
-        });
+        const grabEndId = global.display.connect('grab-op-end', safeCallback(
+            this._logger,
+            'display grab-op-end',
+            (display, window, op) => {
+                this._onGrabOpEnd(display, window, op);
+                return undefined;
+            },
+            undefined
+        ));
         this._signalIds.push({ object: global.display, id: grabEndId });
 
         this._enabled = true;
@@ -115,6 +128,7 @@ export class DragDetector {
             // Get window position
             const rect = window.get_frame_rect();
             const position = { x: rect.x, y: rect.y };
+            const pointerState = this._getPointerState();
 
             // Update drag state
             this._dragState.startDrag(window, position);
@@ -133,7 +147,8 @@ export class DragDetector {
             this._eventBus.emit('window-drag-start', {
                 window,
                 position,
-                timestamp: this._dragStartTime
+                timestamp: this._dragStartTime,
+                modifiers: pointerState.modifiers
             });
 
             // Track window position changes
@@ -162,8 +177,8 @@ export class DragDetector {
             }
 
             // Get pointer position (where user released) for zone detection
-            const [pointerX, pointerY] = global.get_pointer();
-            const position = { x: pointerX, y: pointerY };
+            const pointerState = this._getPointerState();
+            const position = { x: pointerState.x, y: pointerState.y };
 
             const dragDuration = Date.now() - this._dragStartTime;
 
@@ -177,7 +192,8 @@ export class DragDetector {
             this._eventBus.emit('window-drag-end', {
                 window,
                 position,
-                duration: dragDuration
+                duration: dragDuration,
+                modifiers: pointerState.modifiers
             });
 
             // Clean up
@@ -212,7 +228,7 @@ export class DragDetector {
         this._disconnectWindowSignals(window);
 
         // Use pointer polling since position-changed doesn't exist on Meta.Window
-        this._lastPointerPos = null;
+        this._lastPointerState = null;
         this._pointerTrackerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 32, () => {
             if (!this._isDragging) {
                 this._pointerTrackerId = null;
@@ -220,15 +236,17 @@ export class DragDetector {
             }
 
             try {
-                const [x, y] = global.get_pointer();
+                const pointerState = this._getPointerState();
+                const { x, y, modifiers } = pointerState;
                 const pos = { x, y };
 
-                // Only emit if position changed
-                if (!this._lastPointerPos ||
-                    this._lastPointerPos.x !== x ||
-                    this._lastPointerPos.y !== y) {
-                    this._lastPointerPos = pos;
-                    this._onWindowPositionChanged(window, pos);
+                // Emit when pointer position OR modifier state changes.
+                if (!this._lastPointerState ||
+                    this._lastPointerState.x !== x ||
+                    this._lastPointerState.y !== y ||
+                    this._lastPointerState.modifiers !== modifiers) {
+                    this._lastPointerState = pointerState;
+                    this._onWindowPositionChanged(window, pos, modifiers);
                 }
             } catch (e) {
                 // Ignore errors during tracking
@@ -248,7 +266,7 @@ export class DragDetector {
             GLib.source_remove(this._pointerTrackerId);
             this._pointerTrackerId = null;
         }
-        this._lastPointerPos = null;
+        this._lastPointerState = null;
     }
 
     /**
@@ -256,8 +274,9 @@ export class DragDetector {
      * @private
      * @param {Meta.Window} window
      * @param {Object} position - Pointer position {x, y}
+     * @param {number} modifiers - Modifier mask from pointer state
      */
-    _onWindowPositionChanged(window, position) {
+    _onWindowPositionChanged(window, position, modifiers = 0) {
         if (!this._isDragging || window !== this._draggedWindow) {
             return;
         }
@@ -280,11 +299,22 @@ export class DragDetector {
             // Emit event
             this._eventBus.emit('window-drag-move', {
                 window,
-                position
+                position,
+                modifiers
             });
         } catch (error) {
             this._logger.error('Error in position-changed handler', { error });
         }
+    }
+
+    /**
+     * Get current pointer coordinates and modifiers.
+     * @private
+     * @returns {{x:number,y:number,modifiers:number}}
+     */
+    _getPointerState() {
+        const [x = 0, y = 0, modifiers = 0] = global.get_pointer();
+        return { x, y, modifiers };
     }
 
     /**
