@@ -1,3 +1,7 @@
+import { Logger } from './logger.js';
+
+const logger = new Logger('EventBus');
+
 /**
  * EventBus - Publish/Subscribe Event System
  *
@@ -112,7 +116,7 @@ export class EventBus {
                 try {
                     handler(data);
                 } catch (error) {
-                    console.error(`Error in event handler for '${event}':`, error);
+                    logger.error(`Error in event handler for '${event}'`, error);
                 }
             }
         }
@@ -128,7 +132,7 @@ export class EventBus {
                 try {
                     handler(data);
                 } catch (error) {
-                    console.error(`Error in once handler for '${event}':`, error);
+                    logger.error(`Error in once handler for '${event}'`, error);
                 }
             }
         }

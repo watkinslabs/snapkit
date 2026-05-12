@@ -12,6 +12,8 @@
  * logger.error('Resolution failed', error);
  */
 
+import { DEBUG_LOGGING_ENABLED } from './debug.js';
+
 export const LogLevel = {
     DEBUG: 0,
     INFO: 1,
@@ -24,6 +26,7 @@ export class Logger {
     static _globalLevel = LogLevel.INFO;
     static _enableTimestamps = true;
     static _enableContext = true;
+    static _enabled = DEBUG_LOGGING_ENABLED;
 
     /**
      * Set global log level
@@ -50,6 +53,24 @@ export class Logger {
      */
     static setContext(enabled) {
         Logger._enableContext = enabled;
+    }
+
+    /**
+     * Enable/disable all logger output
+     *
+     * @param {boolean} enabled
+     */
+    static setEnabled(enabled) {
+        Logger._enabled = Boolean(enabled);
+    }
+
+    /**
+     * Check whether logger output is enabled globally
+     *
+     * @returns {boolean}
+     */
+    static isEnabled() {
+        return Logger._enabled;
     }
 
     /**
@@ -134,7 +155,7 @@ export class Logger {
      * @param {*} data - Additional data
      */
     debug(message, data) {
-        if (this._getLevel() <= LogLevel.DEBUG) {
+        if (Logger._enabled && this._getLevel() <= LogLevel.DEBUG) {
             console.log(this._format('DEBUG', message, data));
         }
     }
@@ -146,7 +167,7 @@ export class Logger {
      * @param {*} data - Additional data
      */
     info(message, data) {
-        if (this._getLevel() <= LogLevel.INFO) {
+        if (Logger._enabled && this._getLevel() <= LogLevel.INFO) {
             console.log(this._format('INFO', message, data));
         }
     }
@@ -158,7 +179,7 @@ export class Logger {
      * @param {*} data - Additional data
      */
     warn(message, data) {
-        if (this._getLevel() <= LogLevel.WARN) {
+        if (Logger._enabled && this._getLevel() <= LogLevel.WARN) {
             console.warn(this._format('WARN', message, data));
         }
     }
@@ -170,7 +191,7 @@ export class Logger {
      * @param {*} data - Error or additional data
      */
     error(message, data) {
-        if (this._getLevel() <= LogLevel.ERROR) {
+        if (Logger._enabled && this._getLevel() <= LogLevel.ERROR) {
             console.error(this._format('ERROR', message, data));
         }
     }

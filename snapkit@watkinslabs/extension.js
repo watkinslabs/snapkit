@@ -17,6 +17,9 @@
 
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { ExtensionController } from './src/extensionController.js';
+import { Logger } from './src/core/logger.js';
+
+const logger = new Logger('Extension');
 
 /**
  * Global error handler wrapper to prevent GNOME Shell crashes
@@ -29,7 +32,7 @@ function safeCall(fn, context) {
         try {
             return fn.apply(this, args);
         } catch (error) {
-            logError(error, `[SnapKit] Error in ${context}`);
+            logger.error(`Error in ${context}`, error);
             return undefined;
         }
     };
@@ -48,20 +51,20 @@ export default class SnapKitExtension extends Extension {
      */
     enable() {
         if (this._fatalError) {
-            log('[SnapKit] Extension in fatal error state, refusing to enable');
+            logger.warn('Extension in fatal error state, refusing to enable');
             return;
         }
 
         try {
-            log('[SnapKit] Enabling extension');
+            logger.info('Enabling extension');
 
             // Create and initialize controller
             this._controller = new ExtensionController();
             this._controller.enable();
 
-            log('[SnapKit] Extension enabled successfully');
+            logger.info('Extension enabled successfully');
         } catch (error) {
-            logError(error, '[SnapKit] Failed to enable extension');
+            logger.error('Failed to enable extension', error);
             this._handleFatalError();
         }
     }
@@ -72,7 +75,7 @@ export default class SnapKitExtension extends Extension {
      */
     disable() {
         try {
-            log('[SnapKit] Disabling extension');
+            logger.info('Disabling extension');
 
             if (this._controller) {
                 this._controller.destroy();
@@ -82,9 +85,9 @@ export default class SnapKitExtension extends Extension {
             // Reset fatal error state on disable (allows retry)
             this._fatalError = false;
 
-            log('[SnapKit] Extension disabled successfully');
+            logger.info('Extension disabled successfully');
         } catch (error) {
-            logError(error, '[SnapKit] Error disabling extension');
+            logger.error('Error disabling extension', error);
             // Force cleanup even on error
             this._controller = null;
         }
@@ -95,7 +98,7 @@ export default class SnapKitExtension extends Extension {
      * @private
      */
     _handleFatalError() {
-        log('[SnapKit] Handling fatal error, attempting safe cleanup');
+        logger.error('Handling fatal error, attempting safe cleanup');
         this._fatalError = true;
 
         // Attempt to clean up controller
@@ -103,11 +106,11 @@ export default class SnapKitExtension extends Extension {
             try {
                 this._controller.destroy();
             } catch (e) {
-                logError(e, '[SnapKit] Failed to clean up after fatal error');
+                logger.error('Failed to clean up after fatal error', e);
             }
             this._controller = null;
         }
 
-        log('[SnapKit] Extension disabled due to fatal error');
+        logger.error('Extension disabled due to fatal error');
     }
 }

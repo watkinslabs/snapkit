@@ -1,3 +1,7 @@
+import { Logger } from './logger.js';
+
+const logger = new Logger('ComponentManager');
+
 /**
  * ComponentManager - Component Lifecycle Management
  *
@@ -137,7 +141,7 @@ export class ComponentManager {
                 component.disconnect();
             }
         } catch (error) {
-            console.error(`Error destroying component '${name}':`, error);
+            logger.error(`Error destroying component '${name}'`, error);
         }
     }
 

@@ -4,6 +4,7 @@ EXTENSION_UUID = snapkit@watkinslabs
 EXTENSION_DIR = $(EXTENSION_UUID)
 INSTALL_DIR = $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 BUILD_DIR = build
+PACKAGE_STAGING_DIR = $(BUILD_DIR)/package/$(EXTENSION_UUID)
 METADATA = $(EXTENSION_DIR)/metadata.json
 
 # Get current version from metadata.json
@@ -204,8 +205,14 @@ bump:
 build: check-deps compile-schemas
 	@printf "$(P_INFO) Building extension package v$(VERSION)...\n"
 	@mkdir -p $(BUILD_DIR) || { printf "$(P_ERR) Failed to create build directory\n"; exit 1; }
+	@rm -rf $(PACKAGE_STAGING_DIR)
+	@mkdir -p $(PACKAGE_STAGING_DIR) || { printf "$(P_ERR) Failed to create package staging directory\n"; exit 1; }
+	@cp -r $(addprefix $(EXTENSION_DIR)/, $(FILES)) $(PACKAGE_STAGING_DIR)/ || { printf "$(P_ERR) Failed to stage files\n"; exit 1; }
+	@cp -r $(addprefix $(EXTENSION_DIR)/, $(DIRS)) $(PACKAGE_STAGING_DIR)/ || { printf "$(P_ERR) Failed to stage directories\n"; exit 1; }
+	@sed -i 's/^export const DEBUG_LOGGING_ENABLED = true;/export const DEBUG_LOGGING_ENABLED = false;/' \
+		$(PACKAGE_STAGING_DIR)/src/core/debug.js || { printf "$(P_ERR) Failed to disable debug logging for production package\n"; exit 1; }
 	@# Create zip with files at root level (required for extensions.gnome.org)
-	@cd $(EXTENSION_DIR) && zip -r ../$(BUILD_DIR)/$(ZIP_NAME) $(FILES) $(DIRS) >/dev/null 2>&1 || { \
+	@cd $(PACKAGE_STAGING_DIR) && zip -r ../../$(ZIP_NAME) $(FILES) $(DIRS) >/dev/null 2>&1 || { \
 		printf "$(P_ERR) Failed to create zip archive\n"; \
 		exit 1; \
 	}

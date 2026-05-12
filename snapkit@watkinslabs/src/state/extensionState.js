@@ -1,4 +1,7 @@
 import { BaseState } from './baseState.js';
+import { Logger } from '../core/logger.js';
+
+const logger = new Logger('ExtensionState');
 
 /**
  * Extension State Machine
@@ -113,7 +116,7 @@ export class ExtensionState extends BaseState {
         const validNextStates = VALID_TRANSITIONS[this._state];
         if (!validNextStates.includes(newState)) {
             // Log warning instead of throwing to prevent GNOME Shell crashes
-            console.warn(
+            logger.warn(
                 `[SnapKit] Invalid state transition: ${this._state} -> ${newState}. ` +
                 `Valid transitions from ${this._state}: ${validNextStates.join(', ')}`
             );
