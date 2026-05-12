@@ -15,6 +15,7 @@ import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 
 export class MonitorManager {
     constructor() {
@@ -39,9 +40,15 @@ export class MonitorManager {
         this._updateMonitors();
 
         // Listen for monitor changes (signal is on layoutManager in GNOME 45+)
-        this._monitorsChangedId = this._layoutManager.connect('monitors-changed', () => {
-            this._onMonitorsChanged();
-        });
+        this._monitorsChangedId = this._layoutManager.connect('monitors-changed', safeCallback(
+            this._logger,
+            'layoutManager monitors-changed',
+            () => {
+                this._onMonitorsChanged();
+                return undefined;
+            },
+            undefined
+        ));
 
         this._logger.info('MonitorManager initialized', {
             monitorCount: this._monitors.length,

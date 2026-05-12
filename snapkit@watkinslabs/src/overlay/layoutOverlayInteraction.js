@@ -14,6 +14,7 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 
 export class LayoutOverlayInteraction {
     /**
@@ -59,24 +60,39 @@ export class LayoutOverlayInteraction {
         const { actor, zone } = zoneData;
 
         // Hover enter
-        const enterSignalId = actor.connect('enter-event', () => {
-            this._onZoneEnter(zone.zoneIndex);
-            return Clutter.EVENT_PROPAGATE;
-        });
+        const enterSignalId = actor.connect('enter-event', safeCallback(
+            this._logger,
+            `overlay-zone enter-event (${zone.zoneIndex})`,
+            () => {
+                this._onZoneEnter(zone.zoneIndex);
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
         this._signalIds.push({ actor, id: enterSignalId });
 
         // Hover leave
-        const leaveSignalId = actor.connect('leave-event', () => {
-            this._onZoneLeave(zone.zoneIndex);
-            return Clutter.EVENT_PROPAGATE;
-        });
+        const leaveSignalId = actor.connect('leave-event', safeCallback(
+            this._logger,
+            `overlay-zone leave-event (${zone.zoneIndex})`,
+            () => {
+                this._onZoneLeave(zone.zoneIndex);
+                return Clutter.EVENT_PROPAGATE;
+            },
+            Clutter.EVENT_PROPAGATE
+        ));
         this._signalIds.push({ actor, id: leaveSignalId });
 
         // Click
-        const clickSignalId = actor.connect('button-press-event', () => {
-            this._onZoneClick(zone.zoneIndex);
-            return Clutter.EVENT_STOP;
-        });
+        const clickSignalId = actor.connect('button-press-event', safeCallback(
+            this._logger,
+            `overlay-zone click-event (${zone.zoneIndex})`,
+            () => {
+                this._onZoneClick(zone.zoneIndex);
+                return Clutter.EVENT_STOP;
+            },
+            Clutter.EVENT_STOP
+        ));
         this._signalIds.push({ actor, id: clickSignalId });
     }
 
@@ -141,9 +157,12 @@ export class LayoutOverlayInteraction {
         }
 
         // Capture key events
-        const keySignalId = stage.connect('key-press-event', (actor, event) => {
-            return this._onKeyPress(event, currentZoneIndex, zoneCount);
-        });
+        const keySignalId = stage.connect('key-press-event', safeCallback(
+            this._logger,
+            'overlay keyboard key-press-event',
+            (actor, event) => this._onKeyPress(event, currentZoneIndex, zoneCount),
+            Clutter.EVENT_PROPAGATE
+        ));
 
         this._signalIds.push({ actor: stage, id: keySignalId });
         this._logger.debug('Keyboard navigation setup');

@@ -14,6 +14,7 @@
 import Meta from 'gi://Meta';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 
 /**
  * Window info
@@ -22,6 +23,7 @@ import { Logger } from '../core/logger.js';
  * @property {number} monitorIndex - Monitor index
  * @property {string} layoutId - Layout ID
  * @property {number} zoneIndex - Zone index
+ * @property {{x:number,y:number,width:number,height:number}|null} restoreRect - Geometry to restore on unsnap
  * @property {number} timestamp - When window was positioned
  */
 
@@ -48,15 +50,21 @@ export class WindowTracker {
 
         // Listen for window destruction via window manager
         try {
-            this._wmSignalId = global.window_manager.connect('destroy', (wm, actor) => {
-                const window = actor.meta_window;
-                if (window && this._windowToInfo.has(window)) {
-                    this._logger.debug('Window destroyed, untracking', {
-                        windowTitle: window.get_title?.() || 'unknown'
-                    });
-                    this.untrackWindow(window);
-                }
-            });
+            this._wmSignalId = global.window_manager.connect('destroy', safeCallback(
+                this._logger,
+                'window_manager destroy',
+                (wm, actor) => {
+                    const window = actor.meta_window;
+                    if (window && this._windowToInfo.has(window)) {
+                        this._logger.debug('Window destroyed, untracking', {
+                            windowTitle: window.get_title?.() || 'unknown'
+                        });
+                        this.untrackWindow(window);
+                    }
+                    return undefined;
+                },
+                undefined
+            ));
         } catch (error) {
             this._logger.error('Failed to connect to window manager', { error });
         }
@@ -87,14 +95,18 @@ export class WindowTracker {
      * @param {number} monitorIndex
      * @param {string} layoutId
      * @param {number} zoneIndex
+     * @param {Object} options
+     * @param {{x:number,y:number,width:number,height:number}|null} options.restoreRect
      */
-    trackWindow(window, monitorIndex, layoutId, zoneIndex) {
+    trackWindow(window, monitorIndex, layoutId, zoneIndex, options = {}) {
         if (!window) {
             throw new Error('window is required');
         }
 
+        const existingInfo = this._windowToInfo.get(window) || null;
+
         // Remove previous tracking for this window.
-        this.untrackWindow(window);
+        this.untrackWindow(window, { restore: false });
         this._removeZoneMappingsForWindow(window);
 
         // Enforce one-window-per-zone by evicting an existing occupant first.
@@ -123,6 +135,9 @@ export class WindowTracker {
             monitorIndex,
             layoutId,
             zoneIndex,
+            restoreRect: this._normalizeRect(options.restoreRect) ||
+                this._normalizeRect(existingInfo?.restoreRect) ||
+                null,
             timestamp: Date.now()
         };
 
@@ -142,9 +157,11 @@ export class WindowTracker {
      * Stop tracking a window
      *
      * @param {Meta.Window} window
+     * @param {Object} options
+     * @param {boolean} options.restore
      * @returns {boolean} True if window was tracked
      */
-    untrackWindow(window) {
+    untrackWindow(window, options = {}) {
         if (!window) {
             return false;
         }
@@ -169,6 +186,11 @@ export class WindowTracker {
 
         // Remove any stale duplicate mappings that still point to this window.
         const staleRemoved = this._removeZoneMappingsForWindow(window);
+
+        const restore = options.restore === true;
+        if (restore) {
+            this._restoreWindowRect(window, info.restoreRect);
+        }
 
         this._logger.debug('Window untracked', {
             windowTitle: window.get_title(),
@@ -406,5 +428,74 @@ export class WindowTracker {
             }
         }
         return removed;
+    }
+
+    /**
+     * Normalize a rectangle object.
+     * @private
+     * @param {Object} rect
+     * @returns {{x:number,y:number,width:number,height:number}|null}
+     */
+    _normalizeRect(rect) {
+        if (!rect || typeof rect !== 'object') {
+            return null;
+        }
+
+        const x = Number(rect.x);
+        const y = Number(rect.y);
+        const width = Number(rect.width);
+        const height = Number(rect.height);
+        if (!Number.isFinite(x) || !Number.isFinite(y) ||
+            !Number.isFinite(width) || !Number.isFinite(height) ||
+            width <= 0 || height <= 0) {
+            return null;
+        }
+
+        return {
+            x: Math.round(x),
+            y: Math.round(y),
+            width: Math.max(1, Math.round(width)),
+            height: Math.max(1, Math.round(height))
+        };
+    }
+
+    /**
+     * Restore a window to a saved rectangle.
+     * @private
+     * @param {Meta.Window} window
+     * @param {{x:number,y:number,width:number,height:number}|null} rect
+     * @returns {boolean}
+     */
+    _restoreWindowRect(window, rect) {
+        const targetRect = this._normalizeRect(rect);
+        if (!targetRect) {
+            return false;
+        }
+
+        try {
+            // Accessing frame rect verifies the window is still valid.
+            window.get_frame_rect();
+
+            if (window.get_maximized()) {
+                window.unmaximize(Meta.MaximizeFlags.BOTH);
+            }
+
+            window.move_resize_frame(
+                true,
+                targetRect.x,
+                targetRect.y,
+                targetRect.width,
+                targetRect.height
+            );
+
+            this._logger.debug('Restored window geometry on unsnap', {
+                windowTitle: window.get_title?.() || 'unknown',
+                geometry: targetRect
+            });
+            return true;
+        } catch (error) {
+            this._logger.warn('Failed to restore window geometry on unsnap', { error });
+            return false;
+        }
     }
 }

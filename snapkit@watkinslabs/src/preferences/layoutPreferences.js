@@ -597,7 +597,7 @@ export class LayoutPreferences {
             const monitor = this._monitorManager.getMonitor(i);
             if (!monitor) continue;
 
-            const isPrimary = i === this._monitorManager.getPrimaryMonitor();
+            const isPrimary = i === this._monitorManager.getPrimaryMonitorIndex();
             const currentLayout = this._settings.perMonitorLayouts[i] || this._settings.defaultLayout;
 
             // Create monitor row
@@ -1138,6 +1138,8 @@ export class LayoutPreferences {
             return;
         }
 
+        const MAX_IMPORT_BYTES = 1024 * 1024; // 1 MiB hard limit for imported layout payloads.
+
         try {
             let json = input.trim();
 
@@ -1156,6 +1158,18 @@ export class LayoutPreferences {
                     return;
                 }
 
+                let fileSize = 0;
+                try {
+                    const fileInfo = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null);
+                    fileSize = Number(fileInfo.get_size()) || 0;
+                } catch (error) {
+                    this._logger.warn('Unable to read import file size metadata', { error });
+                }
+                if (fileSize > MAX_IMPORT_BYTES) {
+                    this._showMessage('Import file is too large (max 1 MiB)', 'error');
+                    return;
+                }
+
                 const [success, contents] = file.load_contents(null);
                 if (!success) {
                     this._showMessage('Failed to read file', 'error');
@@ -1165,8 +1179,20 @@ export class LayoutPreferences {
                 json = new TextDecoder().decode(contents);
             }
 
+            if (json.length > MAX_IMPORT_BYTES) {
+                this._showMessage('Import payload is too large (max 1 MiB)', 'error');
+                return;
+            }
+
+            const parsed = JSON.parse(json);
+            const layoutArray = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {});
+            if (!Array.isArray(layoutArray) || layoutArray.length === 0) {
+                this._showMessage('Import payload does not contain any layouts', 'error');
+                return;
+            }
+
             // Import layouts
-            const count = this._layoutManager.importMultipleLayouts(json);
+            const count = this._layoutManager.importMultipleLayouts(JSON.stringify(layoutArray));
 
             if (count > 0) {
                 this._logger.info(`Imported ${count} layouts`);

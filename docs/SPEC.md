@@ -333,11 +333,13 @@ Type, default, and constraints are part of the contract.
 | `auto-snap-on-drag` | `b` | `true` | drag drop snaps on release |
 | `focus-window-on-snap` | `b` | `true` | focus target after snap |
 | `restore-on-unsnap` | `b` | `true` | restore prior window size |
+| `drag-zone-modifier-disables-zones` | `b` | `true` | `true` = modifier temporarily disables zones, `false` = zones are inactive unless modifier is held |
+| `drag-zone-modifier-key` | `s` | `control` | one of: `control`, `shift`, `alt`, `super` |
 | `live-resize-updates` | `b` | `true` | `true` = live updates while dragging, `false` = apply on release |
-| `shake-enabled` | `b` | `true` | required target; currently not present in shipped schema v1 |
-| `shake-window-ms` | `i` | `500` | required target; currently not present in shipped schema v1 |
-| `shake-min-delta` | `i` | `35` | required target; currently not present in shipped schema v1 |
-| `shake-direction-changes` | `i` | `4` | required target; currently not present in shipped schema v1 |
+| `shake-enabled` | `b` | `true` | enables shake-to-cancel during drag |
+| `shake-window-ms` | `i` | `500` | shake detection window (ms) |
+| `shake-min-delta` | `i` | `35` | minimum horizontal delta per shake sample (px) |
+| `shake-direction-changes` | `i` | `4` | direction changes required to trigger cancel |
 | `toggle-overlay` | `as` | `['<Super>space']` | array of accel strings |
 | `snap-left/right/up/down` | `as` | schema defaults | accel strings |
 | `snap-topleft/topright/bottomleft/bottomright` | `as` | schema defaults | accel strings |

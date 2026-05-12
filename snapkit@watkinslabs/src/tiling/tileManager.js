@@ -13,6 +13,7 @@
 import Meta from 'gi://Meta';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 
 /**
  * Tile group - windows sharing a layout
@@ -53,9 +54,15 @@ export class TileManager {
      */
     initialize() {
         // Connect to window size changes
-        this._windowSizeChangedId = global.display.connect('window-created', (display, window) => {
-            this._connectWindowSignals(window);
-        });
+        this._windowSizeChangedId = global.display.connect('window-created', safeCallback(
+            this._logger,
+            'display window-created',
+            (display, window) => {
+                this._connectWindowSignals(window);
+                return undefined;
+            },
+            undefined
+        ));
 
         // Connect existing windows
         const windows = global.get_window_actors().map(a => a.get_meta_window());
@@ -98,9 +105,15 @@ export class TileManager {
             return; // Already connected
         }
 
-        const signalId = window.connect('size-changed', () => {
-            this._onWindowResized(window);
-        });
+        const signalId = window.connect('size-changed', safeCallback(
+            this._logger,
+            'window size-changed',
+            () => {
+                this._onWindowResized(window);
+                return undefined;
+            },
+            undefined
+        ));
 
         this._resizeListeners.set(window, signalId);
     }

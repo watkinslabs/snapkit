@@ -55,6 +55,20 @@ export class ValidationResult {
 
 export class LayoutValidator {
     /**
+     * @param {Object} options
+     * @param {number} options.maxTreeDepth
+     * @param {number} options.maxNodeCount
+     */
+    constructor(options = {}) {
+        this._maxTreeDepth = Number.isInteger(options.maxTreeDepth)
+            ? options.maxTreeDepth
+            : 32;
+        this._maxNodeCount = Number.isInteger(options.maxNodeCount)
+            ? options.maxNodeCount
+            : 512;
+    }
+
+    /**
      * Validate a layout definition
      * @param {*} layout - Layout definition (simple or full-spec)
      * @returns {ValidationResult}
@@ -121,6 +135,7 @@ export class LayoutValidator {
      */
     validateFullSpec(layout) {
         const result = new ValidationResult(true);
+        const stats = { nodeCount: 0 };
 
         // Must have tree property
         if (!layout.tree) {
@@ -129,7 +144,7 @@ export class LayoutValidator {
         }
 
         // Validate tree structure
-        this._validateTree(layout.tree, result, 'tree');
+        this._validateTree(layout.tree, result, 'tree', 1, stats);
 
         // Optional: validate name
         if (layout.name !== undefined && typeof layout.name !== 'string') {
@@ -150,8 +165,21 @@ export class LayoutValidator {
      * @param {Object} node - Tree node
      * @param {ValidationResult} result
      * @param {string} path - Path for error messages
+     * @param {number} depth - Current depth
+     * @param {{nodeCount:number}} stats
      */
-    _validateTree(node, result, path) {
+    _validateTree(node, result, path, depth, stats) {
+        if (stats.nodeCount >= this._maxNodeCount) {
+            result.addError(`layout tree exceeds max node count (${this._maxNodeCount})`);
+            return;
+        }
+        if (depth > this._maxTreeDepth) {
+            result.addError(`layout tree exceeds max depth (${this._maxTreeDepth}) at ${path}`);
+            return;
+        }
+
+        stats.nodeCount++;
+
         if (!node) {
             result.addError(`${path}: node is null or undefined`);
             return;
@@ -169,7 +197,7 @@ export class LayoutValidator {
         }
 
         // Otherwise, must be branch node
-        this._validateBranchNode(node, result, path);
+        this._validateBranchNode(node, result, path, depth, stats);
     }
 
     /**
@@ -197,8 +225,10 @@ export class LayoutValidator {
      * @param {Object} node
      * @param {ValidationResult} result
      * @param {string} path
+     * @param {number} depth
+     * @param {{nodeCount:number}} stats
      */
-    _validateBranchNode(node, result, path) {
+    _validateBranchNode(node, result, path, depth, stats) {
         // Must have direction
         if (!node.direction) {
             result.addError(`${path}: branch node must have "direction"`);
@@ -221,13 +251,13 @@ export class LayoutValidator {
         if (!node.left) {
             result.addError(`${path}: branch node must have "left" child`);
         } else {
-            this._validateTree(node.left, result, `${path}.left`);
+            this._validateTree(node.left, result, `${path}.left`, depth + 1, stats);
         }
 
         if (!node.right) {
             result.addError(`${path}: branch node must have "right" child`);
         } else {
-            this._validateTree(node.right, result, `${path}.right`);
+            this._validateTree(node.right, result, `${path}.right`, depth + 1, stats);
         }
     }
 

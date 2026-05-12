@@ -13,6 +13,7 @@
 import Meta from 'gi://Meta';
 
 import { Logger } from '../core/logger.js';
+import { safeCallback } from '../core/safeCallback.js';
 
 export class DividerSyncManager {
     /**
@@ -36,12 +37,17 @@ export class DividerSyncManager {
 
         this._signalIds = [];
         this._enabled = false;
+        this._config = {
+            liveResizeUpdates: true
+        };
 
         // Resize tracking state
         this._resizingWindow = null;
         this._resizeOp = null;
         this._originalRect = null;
         this._resizeInfo = null; // {monitorIndex, layoutId, zoneIndex}
+        this._liveResizeSignal = null;
+        this._applyingResizeUpdate = false;
     }
 
     /**
@@ -54,14 +60,26 @@ export class DividerSyncManager {
         }
 
         // Connect to grab-op signals to detect resize operations
-        const grabBeginId = global.display.connect('grab-op-begin', (display, window, op) => {
-            this._onGrabOpBegin(display, window, op);
-        });
+        const grabBeginId = global.display.connect('grab-op-begin', safeCallback(
+            this._logger,
+            'display grab-op-begin',
+            (display, window, op) => {
+                this._onGrabOpBegin(display, window, op);
+                return undefined;
+            },
+            undefined
+        ));
         this._signalIds.push({ object: global.display, id: grabBeginId });
 
-        const grabEndId = global.display.connect('grab-op-end', (display, window, op) => {
-            this._onGrabOpEnd(display, window, op);
-        });
+        const grabEndId = global.display.connect('grab-op-end', safeCallback(
+            this._logger,
+            'display grab-op-end',
+            (display, window, op) => {
+                this._onGrabOpEnd(display, window, op);
+                return undefined;
+            },
+            undefined
+        ));
         this._signalIds.push({ object: global.display, id: grabEndId });
 
         this._enabled = true;
@@ -110,6 +128,10 @@ export class DividerSyncManager {
             op: this._getOpName(op),
             zoneIndex: windowInfo.zoneIndex
         });
+
+        if (this._config.liveResizeUpdates) {
+            this._connectLiveResizeSignal(window);
+        }
     }
 
     /**
@@ -130,27 +152,50 @@ export class DividerSyncManager {
         this._logger.debug(`SnapKit DEBUG: DividerSyncManager - resize ENDED`);
 
         try {
+            const oldRect = this._originalRect;
             const newRect = window.get_frame_rect();
+
+            this._applyResizeUpdates(oldRect, newRect);
+        } catch (error) {
+            this._logger.debug(`SnapKit DEBUG: - ERROR: ${error.message}`);
+            this._logger.error('Error handling resize end', { error });
+        }
+
+        this._clearResizeState();
+    }
+
+    /**
+     * Apply divider override updates for a resize delta.
+     * @private
+     * @param {Meta.Rectangle} oldRect
+     * @param {Meta.Rectangle} newRect
+     * @returns {boolean}
+     */
+    _applyResizeUpdates(oldRect, newRect) {
+        if (!this._resizeInfo || !oldRect || !newRect || this._applyingResizeUpdate) {
+            return false;
+        }
+
+        this._applyingResizeUpdate = true;
+        try {
             const { monitorIndex, layoutId, zoneIndex } = this._resizeInfo;
 
             this._logger.debug(`SnapKit DEBUG: - Using layoutId: ${layoutId}, zoneIndex: ${zoneIndex}`);
-            this._logger.debug(`SnapKit DEBUG: - Original rect: x=${this._originalRect.x}, y=${this._originalRect.y}, w=${this._originalRect.width}, h=${this._originalRect.height}`);
+            this._logger.debug(`SnapKit DEBUG: - Original rect: x=${oldRect.x}, y=${oldRect.y}, w=${oldRect.width}, h=${oldRect.height}`);
             this._logger.debug(`SnapKit DEBUG: - New rect: x=${newRect.x}, y=${newRect.y}, w=${newRect.width}, h=${newRect.height}`);
 
             // Get work area
             const workArea = this._monitorManager.getWorkArea(monitorIndex);
             if (!workArea) {
                 this._logger.debug(`SnapKit DEBUG: - No work area found, aborting`);
-                this._clearResizeState();
-                return;
+                return false;
             }
 
             // Get current layout
             const layoutDef = this._layoutManager.getLayout(layoutId);
             if (!layoutDef) {
                 this._logger.debug(`SnapKit DEBUG: - Layout ${layoutId} not found, aborting`);
-                this._clearResizeState();
-                return;
+                return false;
             }
 
             this._logger.debug(`SnapKit DEBUG: - Layout found: ${layoutDef.name}`);
@@ -169,60 +214,61 @@ export class DividerSyncManager {
             const originalZone = zones.find(z => z.zoneIndex === zoneIndex);
             if (!originalZone) {
                 this._logger.debug(`SnapKit DEBUG: - Zone ${zoneIndex} not found in resolved zones, aborting`);
-                this._clearResizeState();
-                return;
+                return false;
             }
 
             // Calculate which dividers were moved and their new ratios (handles corners)
             const dividerUpdates = this._calculateDividerUpdates(
-                this._originalRect,
+                oldRect,
                 newRect,
                 originalZone,
                 workArea,
-                op,
+                this._resizeOp,
                 layoutDef.layout,
                 overrides
             );
 
             this._logger.debug(`SnapKit DEBUG: - Divider updates: ${JSON.stringify(dividerUpdates)}`);
 
-            if (dividerUpdates.length > 0) {
-                // Apply ALL divider updates
-                for (const update of dividerUpdates) {
-                    this._logger.debug('Divider update calculated', update);
-
-                    this._logger.debug(`SnapKit DEBUG: - Setting override path="${update.path}", ratio=${update.ratio}`);
-
-                    // Update override store
-                    this._overrideStore.setOverride(
-                        layoutId,
-                        monitorIndex,
-                        update.path,
-                        update.ratio
-                    );
-
-                    // Emit event for each divider
-                    this._eventBus.emit('divider-moved', {
-                        layoutId,
-                        monitorIndex,
-                        path: update.path,
-                        ratio: update.ratio
-                    });
-                }
-
-                this._logger.debug(`SnapKit DEBUG: - Calling _resnapAllWindows for layout ${layoutId}`);
-
-                // Re-snap all windows in this layout on this monitor (once, after all updates)
-                this._resnapAllWindows(monitorIndex, layoutId, layoutDef.layout);
-            } else {
+            if (dividerUpdates.length === 0) {
                 this._logger.debug(`SnapKit DEBUG: - No divider updates calculated (edges at screen boundary or resize too small)`);
+                return false;
             }
-        } catch (error) {
-            this._logger.debug(`SnapKit DEBUG: - ERROR: ${error.message}`);
-            this._logger.error('Error handling resize end', { error });
-        }
 
-        this._clearResizeState();
+            // Apply ALL divider updates
+            for (const update of dividerUpdates) {
+                this._logger.debug('Divider update calculated', update);
+                this._logger.debug(`SnapKit DEBUG: - Setting override path="${update.path}", ratio=${update.ratio}`);
+
+                // Update override store
+                this._overrideStore.setOverride(
+                    layoutId,
+                    monitorIndex,
+                    update.path,
+                    update.ratio
+                );
+
+                // Emit event for each divider
+                this._eventBus.emit('divider-moved', {
+                    layoutId,
+                    monitorIndex,
+                    path: update.path,
+                    ratio: update.ratio
+                });
+            }
+
+            this._logger.debug(`SnapKit DEBUG: - Calling _resnapAllWindows for layout ${layoutId}`);
+
+            // Re-snap all windows in this layout on this monitor (once, after all updates)
+            this._resnapAllWindows(monitorIndex, layoutId, layoutDef.layout);
+            this._originalRect = newRect;
+            return true;
+        } catch (error) {
+            this._logger.error('Error applying resize updates', { error });
+            return false;
+        } finally {
+            this._applyingResizeUpdate = false;
+        }
     }
 
     /**
@@ -566,14 +612,63 @@ export class DividerSyncManager {
     }
 
     /**
+     * Connect temporary live resize signal for active resize window.
+     * @private
+     * @param {Meta.Window} window
+     */
+    _connectLiveResizeSignal(window) {
+        this._disconnectLiveResizeSignal();
+        if (!window || !this._config.liveResizeUpdates) {
+            return;
+        }
+
+        const signalId = window.connect('size-changed', safeCallback(
+            this._logger,
+            'window size-changed (live divider resize)',
+            () => {
+                if (!this._enabled || window !== this._resizingWindow || !this._originalRect) {
+                    return undefined;
+                }
+
+                const newRect = window.get_frame_rect();
+                this._applyResizeUpdates(this._originalRect, newRect);
+                return undefined;
+            },
+            undefined
+        ));
+
+        this._liveResizeSignal = { window, id: signalId };
+    }
+
+    /**
+     * Disconnect temporary live resize signal.
+     * @private
+     */
+    _disconnectLiveResizeSignal() {
+        if (!this._liveResizeSignal) {
+            return;
+        }
+
+        const { window, id } = this._liveResizeSignal;
+        try {
+            window.disconnect(id);
+        } catch (error) {
+            // Window may already be destroyed/disconnected.
+        }
+        this._liveResizeSignal = null;
+    }
+
+    /**
      * Clear resize state
      * @private
      */
     _clearResizeState() {
+        this._disconnectLiveResizeSignal();
         this._resizingWindow = null;
         this._resizeOp = null;
         this._originalRect = null;
         this._resizeInfo = null;
+        this._applyingResizeUpdate = false;
     }
 
     /**
@@ -655,6 +750,25 @@ export class DividerSyncManager {
     enable() {
         if (!this._enabled) {
             this.initialize();
+        }
+    }
+
+    /**
+     * Update runtime configuration.
+     * @param {Object} config
+     */
+    updateConfig(config) {
+        if (!config) {
+            return;
+        }
+
+        if (config.liveResizeUpdates !== undefined) {
+            this._config.liveResizeUpdates = !!config.liveResizeUpdates;
+            if (!this._config.liveResizeUpdates) {
+                this._disconnectLiveResizeSignal();
+            } else if (this._resizingWindow) {
+                this._connectLiveResizeSignal(this._resizingWindow);
+            }
         }
     }
 

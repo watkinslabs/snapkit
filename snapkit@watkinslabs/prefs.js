@@ -10,6 +10,7 @@ import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { LayoutManager } from './src/btree/manager/layoutManager.js';
 
 export default class SnapKitPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -85,6 +86,43 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         this._addSwitchRow(snapGroup, settings, 'auto-snap-on-drag', 'Auto-snap on Drag', 'Snap windows when dragged to zones');
         this._addSwitchRow(snapGroup, settings, 'focus-window-on-snap', 'Focus on Snap', 'Focus window after snapping');
         this._addSwitchRow(snapGroup, settings, 'restore-on-unsnap', 'Restore on Unsnap', 'Restore size when unsnapping');
+        this._addSwitchRow(
+            snapGroup,
+            settings,
+            'live-resize-updates',
+            'Live Divider Resize Updates',
+            'Update snapped layouts continuously while resizing'
+        );
+        this._addSwitchRow(
+            snapGroup,
+            settings,
+            'drag-zone-modifier-disables-zones',
+            'Modifier Key Disables Zones',
+            'Hold the selected modifier key while dragging to temporarily disable zones'
+        );
+        this._addComboStringRow(
+            snapGroup,
+            settings,
+            'drag-zone-modifier-key',
+            'Drag Zone Modifier Key',
+            'Modifier key used to toggle zones while dragging',
+            [
+                { id: 'control', name: 'Ctrl' },
+                { id: 'shift', name: 'Shift' },
+                { id: 'alt', name: 'Alt' },
+                { id: 'super', name: 'Super' },
+            ]
+        );
+
+        const shakeGroup = new Adw.PreferencesGroup({
+            title: 'Shake to Exit Snap',
+            description: 'Configure shake gesture detection while dragging',
+        });
+        behaviorPage.add(shakeGroup);
+        this._addSwitchRow(shakeGroup, settings, 'shake-enabled', 'Enable Shake to Exit', 'Cancel drag snap mode with shake gesture');
+        this._addSpinRow(shakeGroup, settings, 'shake-window-ms', 'Shake Window (ms)', 'Detection time window in milliseconds', 100, 2000, 50);
+        this._addSpinRow(shakeGroup, settings, 'shake-min-delta', 'Minimum Distance (px)', 'Minimum horizontal movement per shake sample', 5, 150, 1);
+        this._addSpinRow(shakeGroup, settings, 'shake-direction-changes', 'Direction Changes', 'Direction changes required to trigger shake cancel', 1, 10, 1);
 
         // Keyboard Shortcuts Group
         const shortcutsGroup = new Adw.PreferencesGroup({
@@ -202,8 +240,10 @@ export default class SnapKitPreferences extends ExtensionPreferences {
     _addEntryRow(group, settings, key, title, subtitle) {
         const row = new Adw.EntryRow({
             title: title,
-            subtitle: subtitle,
         });
+        if (subtitle) {
+            row.set_tooltip_text(subtitle);
+        }
         row.set_text(settings.get_string(key));
         row.connect('changed', () => {
             settings.set_string(key, row.get_text());
@@ -261,15 +301,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
             subtitle: subtitle,
         });
 
-        const layouts = [
-            { id: 'half-horizontal', name: 'Halves (Horizontal)' },
-            { id: 'half-split', name: 'Halves (Vertical)' },
-            { id: 'thirds-horizontal', name: 'Thirds (Horizontal)' },
-            { id: 'thirds-vertical', name: 'Thirds (Vertical)' },
-            { id: 'grid-2x2', name: 'Grid 2x2' },
-            { id: 'grid-3x3', name: 'Grid 3x3' },
-            { id: 'quarters', name: 'Quarters' },
-        ];
+        const layouts = this._getLayoutOptions(settings);
 
         const model = new Gtk.StringList();
         layouts.forEach(l => model.append(l.name));
@@ -279,12 +311,85 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         const currentIndex = layouts.findIndex(l => l.id === currentLayout);
         if (currentIndex >= 0) {
             row.set_selected(currentIndex);
+        } else {
+            row.set_selected(0);
         }
 
         row.connect('notify::selected', () => {
             const selected = row.get_selected();
             if (selected >= 0 && selected < layouts.length) {
                 settings.set_string(key, layouts[selected].id);
+            }
+        });
+
+        group.add(row);
+        return row;
+    }
+
+    _getLayoutOptions(settings) {
+        const fallbackLayouts = [
+            { id: 'half-horizontal', name: 'Half Horizontal' },
+            { id: 'half-split', name: 'Half Split' },
+            { id: 'thirds-horizontal', name: 'Thirds Horizontal' },
+            { id: 'thirds-vertical', name: 'Thirds Vertical' },
+            { id: 'grid-2x2', name: '2x2 Grid' },
+            { id: 'grid-3x3', name: '3x3 Grid' },
+            { id: 'quarters', name: 'Quarters' },
+        ];
+
+        try {
+            const layoutManager = new LayoutManager();
+            const customLayoutsRaw = settings.get_string('custom-layouts');
+
+            if (customLayoutsRaw && customLayoutsRaw !== '{}' && customLayoutsRaw !== '[]') {
+                const parsed = JSON.parse(customLayoutsRaw);
+                const customLayouts = Array.isArray(parsed) ? parsed : Object.values(parsed);
+
+                for (const layoutDef of customLayouts) {
+                    if (layoutDef?.id && layoutDef?.layout) {
+                        layoutManager.registerLayout(layoutDef.id, layoutDef);
+                    }
+                }
+            }
+
+            const builtins = layoutManager.getBuiltinLayouts().map(layout => ({
+                id: layout.id,
+                name: layout.name || layout.id
+            }));
+            const customs = layoutManager.getCustomLayouts().map(layout => ({
+                id: layout.id,
+                name: layout.name || layout.id
+            }));
+            const allLayouts = [...builtins, ...customs];
+
+            if (allLayouts.length > 0) {
+                return allLayouts;
+            }
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to build layout options', error);
+        }
+
+        return fallbackLayouts;
+    }
+
+    _addComboStringRow(group, settings, key, title, subtitle, options) {
+        const row = new Adw.ComboRow({
+            title: title,
+            subtitle: subtitle,
+        });
+
+        const model = new Gtk.StringList();
+        options.forEach(option => model.append(option.name));
+        row.set_model(model);
+
+        const currentValue = settings.get_string(key);
+        const currentIndex = options.findIndex(option => option.id === currentValue);
+        row.set_selected(currentIndex >= 0 ? currentIndex : 0);
+
+        row.connect('notify::selected', () => {
+            const selected = row.get_selected();
+            if (selected >= 0 && selected < options.length) {
+                settings.set_string(key, options[selected].id);
             }
         });
 

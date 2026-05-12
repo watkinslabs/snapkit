@@ -53,8 +53,8 @@ export function registerServices(controller) {
 
     // BTree services
     sc.register('layoutValidator', () => new LayoutValidator(), true);
-    sc.register('layoutResolver', () => new LayoutResolver(sc.get('layoutValidator')), true);
-    sc.register('layoutManager', () => new LayoutManager(sc.get('layoutValidator')), true);
+    sc.register('layoutResolver', () => new LayoutResolver(), true);
+    sc.register('layoutManager', () => new LayoutManager(), true);
     sc.register('overrideStore', () => new OverrideStore(), true);
 
     // Tiling services

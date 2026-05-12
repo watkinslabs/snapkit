@@ -79,6 +79,16 @@ export class SnapHandler {
             }
 
             const zoneRect = zones[zoneIndex];
+            const existingInfo = this._windowTracker.getWindowInfo(window);
+            const restoreRect = existingInfo?.restoreRect || (() => {
+                const frameRect = window.get_frame_rect();
+                return {
+                    x: frameRect.x,
+                    y: frameRect.y,
+                    width: frameRect.width,
+                    height: frameRect.height
+                };
+            })();
 
             // Unmaximize if needed
             if (window.get_maximized()) {
@@ -98,7 +108,7 @@ export class SnapHandler {
             );
 
             // Track window
-            this._windowTracker.trackWindow(window, monitorIndex, layoutId, zoneIndex);
+            this._windowTracker.trackWindow(window, monitorIndex, layoutId, zoneIndex, { restoreRect });
 
             this._logger.debug('Window snapped', {
                 windowTitle: window.get_title(),
@@ -237,10 +247,12 @@ export class SnapHandler {
      * Unsnap window (remove from tracking)
      *
      * @param {Meta.Window} window
+     * @param {Object} options
+     * @param {boolean} options.restore
      * @returns {boolean} True if window was snapped
      */
-    unsnapWindow(window) {
-        return this._windowTracker.untrackWindow(window);
+    unsnapWindow(window, options = {}) {
+        return this._windowTracker.untrackWindow(window, options);
     }
 
     /**
