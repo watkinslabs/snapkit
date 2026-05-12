@@ -156,7 +156,7 @@ make release
 - `src/ui/` contains the layout picker, layout switcher, window selector, and layout editor pieces.
 - `schemas/` defines the persisted GSettings keys.
 
-There are `make test` and `make validate` targets in the Makefile, but this checkout does not currently include the referenced `tests/` or `scripts/validate.mjs` paths.
+There are `make test` and `make validate` targets in the Makefile. `make validate` runs `scripts/validate.mjs` for tests, schema compilation, and JavaScript syntax checks.
 
 ## Supported GNOME Shell Versions
 

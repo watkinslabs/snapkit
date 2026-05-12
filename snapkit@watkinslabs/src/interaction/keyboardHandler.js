@@ -229,9 +229,47 @@ export class KeyboardHandler {
         }
 
         // Add key
-        keyName += Clutter.get_key_name(symbol);
+        const symbolName = this._getSymbolName(symbol);
+        if (symbolName) {
+            keyName += symbolName;
+        }
 
         return keyName;
+    }
+
+    /**
+     * Resolve a symbolic key name across Clutter API versions.
+     * @private
+     * @param {number} symbol
+     * @returns {string}
+     */
+    _getSymbolName(symbol) {
+        if (typeof symbol !== 'number') {
+            return '';
+        }
+
+        if (typeof Clutter.get_key_name === 'function') {
+            const keyName = Clutter.get_key_name(symbol);
+            if (typeof keyName === 'string' && keyName.length > 0) {
+                return keyName;
+            }
+        }
+
+        if (typeof Clutter.keyval_name === 'function') {
+            const keyName = Clutter.keyval_name(symbol);
+            if (typeof keyName === 'string' && keyName.length > 0) {
+                return keyName;
+            }
+        }
+
+        if (typeof Clutter.keysym_to_unicode === 'function') {
+            const codePoint = Clutter.keysym_to_unicode(symbol);
+            if (typeof codePoint === 'number' && codePoint > 0) {
+                return String.fromCodePoint(codePoint);
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -253,7 +291,10 @@ export class KeyboardHandler {
      * @returns {boolean}
      */
     _matchesKey(symbol, keyName) {
-        const actualKeyName = Clutter.get_key_name(symbol);
+        const actualKeyName = this._getSymbolName(symbol);
+        if (!actualKeyName) {
+            return false;
+        }
         return actualKeyName.toLowerCase() === keyName.toLowerCase();
     }
 
