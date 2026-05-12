@@ -138,8 +138,6 @@ export class WindowSelector {
 
         if (this._windows.length === 0) {
             this._logger.warn('No windows available');
-            // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-            // this._eventBus.emit('window-selector-no-windows', {});
             return;
         }
 
@@ -470,8 +468,6 @@ export class WindowSelector {
      */
     cancel() {
         this._logger.debug('Window selection cancelled');
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('window-selection-cancelled', {});
         this.hide();
     }
 

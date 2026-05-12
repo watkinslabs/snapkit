@@ -212,20 +212,14 @@ export class EventCoordinator {
         switch (newState) {
             case State.CLOSED:
                 // Extension idle, enable trigger detection
-                // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-                // this._eventBus.emit('enable-trigger-detection', {});
                 break;
 
             case State.OPEN:
                 // Overlay open, disable trigger detection
-                // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-                // this._eventBus.emit('disable-trigger-detection', {});
                 break;
 
             case State.DRAG_MODE:
                 // Drag mode, enable drag tracking
-                // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-                // this._eventBus.emit('enable-drag-tracking', {});
                 break;
 
             case State.SELECT_WINDOW:
@@ -254,9 +248,6 @@ export class EventCoordinator {
         }
 
         this._enabled = false;
-
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('event-coordination-disabled', {});
 
         this._logger.info('EventCoordinator disabled');
     }

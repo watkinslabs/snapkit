@@ -460,8 +460,6 @@ export class ExtensionController {
         };
 
         this._logger.info('Drop debug snapshot', payload);
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('debug-drop-snapshot', payload);
     }
 
     /**
@@ -1450,30 +1448,12 @@ export class ExtensionController {
     }
 
     /**
-     * Handle export layouts request
-     * @private
-     */
-    _handleExportLayouts() {
-        this._logger.info('Export layouts requested');
-        // In a real implementation, this would open a file chooser dialog
-        // For now, just log the export data
-        const layoutManager = this._serviceContainer.get('layoutManager');
-        const json = layoutManager.exportAllCustomLayouts();
-        this._logger.info('Custom layouts JSON', { json });
-
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('layouts-export-data', { json });
-    }
-
-    /**
      * Handle import layouts request
      * @private
      */
     _handleImportLayouts() {
         this._logger.info('Import layouts requested');
         // In a real implementation, this would open a file chooser dialog
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('layouts-import-dialog-requested', {});
     }
 
     /**

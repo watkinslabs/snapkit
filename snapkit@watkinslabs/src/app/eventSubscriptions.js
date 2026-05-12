@@ -169,13 +169,6 @@ export function wireEventHandlers(controller) {
         })
     );
 
-    // Import/export events
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layouts-export-requested', () => {
-            controller._handleExportLayouts();
-        })
-    );
-
     controller._eventSubscriptions.push(
         controller._eventBus.on('layouts-import-requested', () => {
             controller._handleImportLayouts();

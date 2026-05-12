@@ -230,13 +230,6 @@ export class LayoutOverlay extends BaseOverlay {
             this._animation.pulse(actor, 1, 200);
         }
 
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('layout-overlay-zone-selected', {
-        //     monitorIndex: this._currentMonitor,
-        //     layout: this._currentLayout,
-        //     zoneIndex,
-        //     zones: this._currentZones
-        // });
     }
 
     /**
@@ -267,8 +260,6 @@ export class LayoutOverlay extends BaseOverlay {
         this._logger.info('Overlay cancelled');
         this.hide();
 
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('layout-overlay-cancelled', {});
     }
 
     /**

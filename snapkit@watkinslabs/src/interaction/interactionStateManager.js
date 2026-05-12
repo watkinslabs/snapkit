@@ -426,8 +426,6 @@ export class InteractionStateManager {
      */
     _onKeyboardCancelDrag() {
         this._logger.debug('Cancel drag via keyboard');
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('request-cancel-drag', {});
     }
 
     /**

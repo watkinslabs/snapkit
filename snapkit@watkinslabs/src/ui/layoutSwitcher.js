@@ -507,8 +507,6 @@ export class LayoutSwitcher {
      */
     cancel() {
         this._logger.debug('Layout switching cancelled');
-        // Unwired event emitter: kept disabled pending dead-code cleanup validation.
-        // this._eventBus.emit('layout-switch-cancelled', {});
         this.hide();
     }
 
