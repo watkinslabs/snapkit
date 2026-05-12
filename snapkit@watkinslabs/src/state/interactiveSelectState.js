@@ -1,4 +1,7 @@
 import { BaseState } from './baseState.js';
+import { Logger } from '../core/logger.js';
+
+const logger = new Logger('InteractiveSelectState');
 
 /**
  * InteractiveSelectState - State for interactive zone selection workflow
@@ -90,7 +93,7 @@ export class InteractiveSelectState extends BaseState {
      */
     start(layout, zones, monitor) {
         if (this._isActive) {
-            console.warn('Interactive select already active');
+            logger.warn('Interactive select already active');
             return;
         }
 

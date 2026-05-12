@@ -1,3 +1,7 @@
+import { Logger } from '../core/logger.js';
+
+const logger = new Logger('BaseState');
+
 /**
  * BaseState - Base class for all state objects
  *
@@ -53,7 +57,7 @@ export class BaseState {
             try {
                 callback(oldState, newState);
             } catch (error) {
-                console.error('Error in state change subscriber:', error);
+                logger.error('Error in state change subscriber', error);
             }
         }
     }

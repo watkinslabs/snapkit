@@ -507,7 +507,6 @@ export class LayoutSwitcher {
      */
     cancel() {
         this._logger.debug('Layout switching cancelled');
-        this._eventBus.emit('layout-switch-cancelled', {});
         this.hide();
     }
 

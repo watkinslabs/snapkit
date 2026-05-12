@@ -426,7 +426,6 @@ export class InteractionStateManager {
      */
     _onKeyboardCancelDrag() {
         this._logger.debug('Cancel drag via keyboard');
-        this._eventBus.emit('request-cancel-drag', {});
     }
 
     /**

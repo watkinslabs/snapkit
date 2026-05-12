@@ -1,6 +1,9 @@
 import Meta from 'gi://Meta';
 
 import { BaseState } from './baseState.js';
+import { Logger } from '../core/logger.js';
+
+const logger = new Logger('DragState');
 
 /**
  * DragState - Tracks window drag operations
@@ -97,7 +100,7 @@ export class DragState extends BaseState {
      */
     startDrag(window, position = null) {
         if (this._isDragging) {
-            console.warn('startDrag called while already dragging');
+            logger.warn('startDrag called while already dragging');
             return;
         }
 

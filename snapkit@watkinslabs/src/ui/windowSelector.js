@@ -138,7 +138,6 @@ export class WindowSelector {
 
         if (this._windows.length === 0) {
             this._logger.warn('No windows available');
-            this._eventBus.emit('window-selector-no-windows', {});
             return;
         }
 
@@ -469,7 +468,6 @@ export class WindowSelector {
      */
     cancel() {
         this._logger.debug('Window selection cancelled');
-        this._eventBus.emit('window-selection-cancelled', {});
         this.hide();
     }
 

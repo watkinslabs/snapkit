@@ -121,6 +121,35 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         this._addSwitchRow(workspaceGroup, settings, 'remember-per-workspace', 'Per-Workspace Layouts', 'Remember different layouts for each workspace');
 
+        // Advanced Layout Storage Group
+        const advancedStorageGroup = new Adw.PreferencesGroup({
+            title: 'Advanced Layout Storage',
+            description: 'Directly edit persisted layout JSON values',
+        });
+        layoutPage.add(advancedStorageGroup);
+
+        this._addEntryRow(
+            advancedStorageGroup,
+            settings,
+            'per-monitor-layouts',
+            'Per-Monitor Layouts JSON',
+            'Map of monitor index to layout ID'
+        );
+        this._addEntryRow(
+            advancedStorageGroup,
+            settings,
+            'custom-layouts',
+            'Custom Layouts JSON',
+            'Serialized custom layout definitions'
+        );
+        this._addEntryRow(
+            advancedStorageGroup,
+            settings,
+            'divider-overrides',
+            'Divider Overrides JSON',
+            'Serialized divider position overrides'
+        );
+
         // About Page
         const aboutPage = new Adw.PreferencesPage({
             title: 'About',
@@ -173,6 +202,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
     _addEntryRow(group, settings, key, title, subtitle) {
         const row = new Adw.EntryRow({
             title: title,
+            subtitle: subtitle,
         });
         row.set_text(settings.get_string(key));
         row.connect('changed', () => {

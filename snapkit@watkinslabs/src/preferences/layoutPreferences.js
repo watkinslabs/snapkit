@@ -1267,7 +1267,6 @@ export class LayoutPreferences {
         // Refresh UI
         this._populateMonitors();
 
-        this._eventBus.emit('layout-settings-reset', {});
     }
 
     /**
