@@ -80,10 +80,6 @@ export class SafeSettings {
         return this._safeGet(key, INT_TYPES, 'get_int', 0);
     }
 
-    get_uint(key) {
-        return this._safeGet(key, INT_TYPES, 'get_uint', 0);
-    }
-
     get_double(key) {
         return this._safeGet(key, DOUBLE_TYPES, 'get_double', 0.0);
     }
@@ -116,10 +112,6 @@ export class SafeSettings {
 
     set_int(key, value) {
         return this._safeSet(key, INT_TYPES, 'set_int', value);
-    }
-
-    set_uint(key, value) {
-        return this._safeSet(key, INT_TYPES, 'set_uint', value);
     }
 
     set_double(key, value) {

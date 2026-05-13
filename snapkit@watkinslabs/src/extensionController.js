@@ -830,17 +830,6 @@ export class ExtensionController {
         }
     }
 
-    /**
-     * Handle zone navigation
-     * @private
-     * @param {Object} data
-     */
-    _handleZoneNavigation(data) {
-        // The overlay-based keyboard zone navigation flow was removed; the
-        // picker bar now handles its own keyboard navigation. This stub
-        // remains so the wired event still has somewhere to land.
-        this._logger.debug('Zone navigation', data);
-    }
 
     /**
      * Handle layout picker hidden
@@ -1460,11 +1449,6 @@ export class ExtensionController {
         // Apply keyboard shortcuts
         keyboardHandler.updateConfig({
             toggleOverlay: settings.toggleOverlay,
-            navigateUp: settings.navigateUp,
-            navigateDown: settings.navigateDown,
-            navigateLeft: settings.navigateLeft,
-            navigateRight: settings.navigateRight,
-            selectZone: settings.selectZone,
             cancel: settings.cancel
         });
 
@@ -1685,21 +1669,6 @@ export class ExtensionController {
                     ? this._settings.get_int('debounce-delay')
                     : 100,
                 toggleOverlay: toggleOverlayBindings[0] || '<Super>space',
-                navigateUp: this._hasSettingsKey('navigate-up')
-                    ? this._settings.get_string('navigate-up')
-                    : 'Up',
-                navigateDown: this._hasSettingsKey('navigate-down')
-                    ? this._settings.get_string('navigate-down')
-                    : 'Down',
-                navigateLeft: this._hasSettingsKey('navigate-left')
-                    ? this._settings.get_string('navigate-left')
-                    : 'Left',
-                navigateRight: this._hasSettingsKey('navigate-right')
-                    ? this._settings.get_string('navigate-right')
-                    : 'Right',
-                selectZone: this._hasSettingsKey('select-zone')
-                    ? this._settings.get_string('select-zone')
-                    : 'Return',
                 cancel: this._hasSettingsKey('cancel')
                     ? this._settings.get_string('cancel')
                     : 'Escape',
@@ -1833,11 +1802,6 @@ export class ExtensionController {
             'enable-corners',
             'debounce-delay',
             'toggle-overlay',
-            'navigate-up',
-            'navigate-down',
-            'navigate-left',
-            'navigate-right',
-            'select-zone',
             'cancel',
             'auto-snap-on-drag',
             'restore-on-unsnap',
@@ -2016,21 +1980,6 @@ export class ExtensionController {
         }
         if (settings.toggleOverlay && this._hasSettingsKey('toggle-overlay')) {
             this._settings.set_strv('toggle-overlay', [settings.toggleOverlay]);
-        }
-        if (settings.navigateUp && this._hasSettingsKey('navigate-up')) {
-            this._settings.set_string('navigate-up', settings.navigateUp);
-        }
-        if (settings.navigateDown && this._hasSettingsKey('navigate-down')) {
-            this._settings.set_string('navigate-down', settings.navigateDown);
-        }
-        if (settings.navigateLeft && this._hasSettingsKey('navigate-left')) {
-            this._settings.set_string('navigate-left', settings.navigateLeft);
-        }
-        if (settings.navigateRight && this._hasSettingsKey('navigate-right')) {
-            this._settings.set_string('navigate-right', settings.navigateRight);
-        }
-        if (settings.selectZone && this._hasSettingsKey('select-zone')) {
-            this._settings.set_string('select-zone', settings.selectZone);
         }
         if (settings.cancel && this._hasSettingsKey('cancel')) {
             this._settings.set_string('cancel', settings.cancel);

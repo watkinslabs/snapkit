@@ -56,15 +56,6 @@ export class LeafNode extends TreeNode {
         super();
         this.zoneIndex = zoneIndex;
     }
-
-    /**
-     * Clone this node
-     * @returns {LeafNode}
-     */
-    clone() {
-        const node = new LeafNode(this.zoneIndex);
-        return node;
-    }
 }
 
 /**
@@ -91,16 +82,6 @@ export class BranchNode extends TreeNode {
         if (this.right) {
             this.right.parent = this;
         }
-    }
-
-    /**
-     * Clone this node and its subtree
-     * @returns {BranchNode}
-     */
-    clone() {
-        const left = this.left ? this.left.clone() : null;
-        const right = this.right ? this.right.clone() : null;
-        return new BranchNode(this.direction, this.ratio, left, right);
     }
 }
 
@@ -159,38 +140,6 @@ export class LayoutTree {
     }
 
     /**
-     * Get tree depth
-     * @returns {number}
-     */
-    getDepth() {
-        return this._getNodeDepth(this.root);
-    }
-
-    /**
-     * Get depth of a node
-     * @private
-     * @param {TreeNode} node
-     * @returns {number}
-     */
-    _getNodeDepth(node) {
-        if (!node || node.isLeaf()) {
-            return 1;
-        }
-
-        const leftDepth = this._getNodeDepth(node.left);
-        const rightDepth = this._getNodeDepth(node.right);
-        return 1 + Math.max(leftDepth, rightDepth);
-    }
-
-    /**
-     * Clone this tree
-     * @returns {LayoutTree}
-     */
-    clone() {
-        return new LayoutTree(this.root ? this.root.clone() : null);
-    }
-
-    /**
      * Find leaf node by zone index
      * @param {number} zoneIndex
      * @returns {LeafNode|null}
@@ -222,39 +171,6 @@ export class LayoutTree {
         }
 
         return this._findLeaf(node.right, zoneIndex);
-    }
-
-    /**
-     * Get all branch nodes with their paths
-     * Used for finding dividers
-     * @returns {Array<{node: BranchNode, path: string}>}
-     */
-    getBranches() {
-        const branches = [];
-        this._collectBranches(this.root, '', branches);
-        return branches;
-    }
-
-    /**
-     * Collect branch nodes
-     * @private
-     * @param {TreeNode} node
-     * @param {string} path - Path from root (e.g., 'L', 'R', 'LL', 'LR')
-     * @param {Array} branches
-     */
-    _collectBranches(node, path, branches) {
-        if (!node || node.isLeaf()) {
-            return;
-        }
-
-        branches.push({ node, path });
-
-        if (node.left) {
-            this._collectBranches(node.left, path + 'L', branches);
-        }
-        if (node.right) {
-            this._collectBranches(node.right, path + 'R', branches);
-        }
     }
 
     /**
@@ -414,21 +330,6 @@ export class LayoutTree {
         }
 
         return node && node.isBranch() ? node : null;
-    }
-
-    /**
-     * Get all dividers (edges) in the tree
-     * Each divider connects two subtrees
-     *
-     * @returns {Array<{path: string, direction: string, ratio: number}>}
-     */
-    getDividers() {
-        const branches = this.getBranches();
-        return branches.map(({ node, path }) => ({
-            path,
-            direction: node.direction,
-            ratio: node.ratio
-        }));
     }
 
     /**

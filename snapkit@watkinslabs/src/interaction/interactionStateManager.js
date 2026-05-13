@@ -144,18 +144,6 @@ export class InteractionStateManager {
             })
         );
 
-        this._subscriptions.push(
-            this._eventBus.on('keyboard-navigate', (data) => {
-                this._onKeyboardNavigate(data);
-            })
-        );
-
-        this._subscriptions.push(
-            this._eventBus.on('keyboard-cancel-drag', () => {
-                this._onKeyboardCancelDrag();
-            })
-        );
-
         // State change events
         this._subscriptions.push(
             this._eventBus.on('extension-state-changed', (data) => {
@@ -501,28 +489,6 @@ export class InteractionStateManager {
     _onKeyboardCancel() {
         this._logger.debug('Cancel via keyboard');
         this._eventBus.emit('request-cancel', {});
-    }
-
-    /**
-     * Handle keyboard navigation
-     * @private
-     * @param {Object} data
-     */
-    _onKeyboardNavigate(data) {
-        const { direction } = data;
-
-        this._logger.debug('Navigate via keyboard', { direction });
-
-        // Forward to overlay
-        this._eventBus.emit('request-zone-navigation', { direction });
-    }
-
-    /**
-     * Handle keyboard cancel drag
-     * @private
-     */
-    _onKeyboardCancelDrag() {
-        this._logger.debug('Cancel drag via keyboard');
     }
 
     /**

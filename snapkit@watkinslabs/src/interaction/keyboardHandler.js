@@ -35,11 +35,6 @@ export class KeyboardHandler {
         // Keybinding configuration
         this._config = {
             toggleOverlay: '<Super>space',
-            navigateUp: 'Up',
-            navigateDown: 'Down',
-            navigateLeft: 'Left',
-            navigateRight: 'Right',
-            selectZone: 'Return',
             cancel: 'Escape'
         };
 
@@ -91,9 +86,6 @@ export class KeyboardHandler {
                 case State.OPEN:
                     return this._handleOpenState(keyName, symbol, modifiers);
 
-                case State.DRAG_MODE:
-                    return this._handleDragMode(keyName, symbol, modifiers);
-
                 default:
                     return Clutter.EVENT_PROPAGATE;
             }
@@ -127,58 +119,15 @@ export class KeyboardHandler {
      * @private
      */
     _handleOpenState(keyName, symbol, modifiers) {
-        // Cancel/close
+        // Cancel/close — Escape (or whatever the user bound) closes the picker.
         if (this._matchesKey(symbol, this._config.cancel)) {
             this._logger.debug('Cancel pressed');
             this._eventBus.emit('keyboard-cancel', {});
             return Clutter.EVENT_STOP;
         }
-
-        // Navigate up
-        if (this._matchesKey(symbol, this._config.navigateUp)) {
-            this._eventBus.emit('keyboard-navigate', { direction: 'up' });
-            return Clutter.EVENT_STOP;
-        }
-
-        // Navigate down
-        if (this._matchesKey(symbol, this._config.navigateDown)) {
-            this._eventBus.emit('keyboard-navigate', { direction: 'down' });
-            return Clutter.EVENT_STOP;
-        }
-
-        // Navigate left
-        if (this._matchesKey(symbol, this._config.navigateLeft)) {
-            this._eventBus.emit('keyboard-navigate', { direction: 'left' });
-            return Clutter.EVENT_STOP;
-        }
-
-        // Navigate right
-        if (this._matchesKey(symbol, this._config.navigateRight)) {
-            this._eventBus.emit('keyboard-navigate', { direction: 'right' });
-            return Clutter.EVENT_STOP;
-        }
-
         return Clutter.EVENT_PROPAGATE;
     }
 
-    /**
-     * Handle key press in DRAG_MODE state
-     * @private
-     * @param {string} keyName
-     * @param {number} symbol
-     * @param {Clutter.ModifierType} modifiers
-     * @returns {boolean}
-     */
-    _handleDragMode(keyName, symbol, modifiers) {
-        // Cancel drag
-        if (this._matchesKey(symbol, this._config.cancel)) {
-            this._logger.debug('Cancel drag pressed');
-            this._eventBus.emit('keyboard-cancel-drag', {});
-            return Clutter.EVENT_STOP;
-        }
-
-        return Clutter.EVENT_PROPAGATE;
-    }
 
     /**
      * Get key name with modifiers
@@ -241,21 +190,6 @@ export class KeyboardHandler {
     updateConfig(config) {
         if (config.toggleOverlay !== undefined) {
             this._config.toggleOverlay = config.toggleOverlay;
-        }
-        if (config.navigateUp !== undefined) {
-            this._config.navigateUp = config.navigateUp;
-        }
-        if (config.navigateDown !== undefined) {
-            this._config.navigateDown = config.navigateDown;
-        }
-        if (config.navigateLeft !== undefined) {
-            this._config.navigateLeft = config.navigateLeft;
-        }
-        if (config.navigateRight !== undefined) {
-            this._config.navigateRight = config.navigateRight;
-        }
-        if (config.selectZone !== undefined) {
-            this._config.selectZone = config.selectZone;
         }
         if (config.cancel !== undefined) {
             this._config.cancel = config.cancel;

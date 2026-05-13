@@ -42,12 +42,6 @@ export function wireEventHandlers(controller) {
     );
 
     controller._eventSubscriptions.push(
-        controller._eventBus.on('request-zone-navigation', data => {
-            controller._handleZoneNavigation(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
         controller._eventBus.on('cancel-snap-preview', data => {
             controller._handleCancelSnapPreview(data);
         })

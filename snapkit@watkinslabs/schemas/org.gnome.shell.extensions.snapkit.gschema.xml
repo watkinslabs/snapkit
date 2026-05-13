@@ -221,37 +221,6 @@
     <key name="move-window-zone-8" type="as"><default>[]</default><summary>Move window to zone 8</summary><description>Move focused window to zone index 8</description></key>
     <key name="move-window-zone-9" type="as"><default>[]</default><summary>Move window to zone 9</summary><description>Move focused window to zone index 9</description></key>
 
-    <!-- Overlay Navigation Keys (not global - work when overlay is open) -->
-    <key name="navigate-up" type="s">
-      <default>'Up'</default>
-      <summary>Navigate up shortcut</summary>
-      <description>Keyboard shortcut to navigate up in overlay</description>
-    </key>
-
-    <key name="navigate-down" type="s">
-      <default>'Down'</default>
-      <summary>Navigate down shortcut</summary>
-      <description>Keyboard shortcut to navigate down in overlay</description>
-    </key>
-
-    <key name="navigate-left" type="s">
-      <default>'Left'</default>
-      <summary>Navigate left shortcut</summary>
-      <description>Keyboard shortcut to navigate left in overlay</description>
-    </key>
-
-    <key name="navigate-right" type="s">
-      <default>'Right'</default>
-      <summary>Navigate right shortcut</summary>
-      <description>Keyboard shortcut to navigate right in overlay</description>
-    </key>
-
-    <key name="select-zone" type="s">
-      <default>'Return'</default>
-      <summary>Select zone shortcut</summary>
-      <description>Keyboard shortcut to select a zone in overlay</description>
-    </key>
-
     <key name="cancel" type="s">
       <default>'Escape'</default>
       <summary>Cancel shortcut</summary>

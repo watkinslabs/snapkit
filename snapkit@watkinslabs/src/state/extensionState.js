@@ -131,15 +131,6 @@ export class ExtensionState extends BaseState {
     }
 
     /**
-     * Get valid next states from current state
-     *
-     * @returns {string[]}
-     */
-    getValidNextStates() {
-        return [...VALID_TRANSITIONS[this._state]];
-    }
-
-    /**
      * Check if transition is valid
      *
      * @param {string} newState
