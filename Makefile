@@ -168,7 +168,7 @@ reload: install
 	@gnome-extensions enable $(EXTENSION_UUID) 2>/dev/null || true
 	@printf "$(P_WARN) Note: GJS caches imports. If changes don't appear, use 'make dev' or log out/in\n"
 
-DEV_RESOLUTION ?= 2000x900
+DEV_RESOLUTION ?= 1700x900
 
 # Isolated install root for `make dev`. Pointing the nested gnome-shell at
 # its own XDG_DATA_HOME means we never overwrite the host session's
