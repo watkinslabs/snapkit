@@ -74,12 +74,6 @@ export function initializeComponents(controller) {
         return le;
     });
 
-    cm.register('layoutSwitcher', () => {
-        const ls = controller._serviceContainer.get('layoutSwitcher');
-        ls.initialize(Main.uiGroup);
-        return ls;
-    });
-
     cm.register('layoutPickerBar', () => {
         const lpb = controller._serviceContainer.get('layoutPickerBar');
         lpb.initialize(Main.uiGroup);

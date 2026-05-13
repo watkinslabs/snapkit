@@ -1,5 +1,7 @@
 import Gio from 'gi://Gio';
 
+import { SafeSettings } from './safeSettings.js';
+
 // Extension settings schema IDs
 const SCHEMA_ID = 'org.gnome.shell.extensions.snapkit';
 const LEGACY_SCHEMA_ID = 'org.gnome.shell.extensions.turtle';
@@ -32,7 +34,8 @@ export function initializeSettings(controller) {
             throw new Error(`Schema ${SCHEMA_ID} not found`);
         }
 
-        controller._settings = new Gio.Settings({ settings_schema: schema });
+        const rawSettings = new Gio.Settings({ settings_schema: schema });
+        controller._settings = new SafeSettings(rawSettings, controller._logger);
         migrateLegacySettings(controller, schemaSource);
         controller._logger.debug('GSettings initialized');
     } catch (error) {
@@ -53,18 +56,7 @@ export function hasSettingsKey(controller, key) {
     if (!controller._settings) {
         return false;
     }
-
-    try {
-        const hasKey = controller._settings.list_keys().includes(key);
-        if (!hasKey && !controller._missingSettingsKeys.has(key)) {
-            controller._missingSettingsKeys.add(key);
-            controller._logger.warn('Settings key missing from loaded schema', { key });
-        }
-        return hasKey;
-    } catch (error) {
-        controller._logger.error('Failed to inspect settings schema key', { key, error });
-        return false;
-    }
+    return controller._settings.hasKey(key);
 }
 
 /**

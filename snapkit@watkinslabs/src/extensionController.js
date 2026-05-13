@@ -22,6 +22,7 @@ import { wireEventHandlers } from './app/eventSubscriptions.js';
 import { initializeSettings, hasSettingsKey } from './app/settingsLifecycle.js';
 import { State } from './state/extensionState.js';
 import { KeybindingManager } from './interaction/keybindingManager.js';
+import { LayoutTree } from './btree/tree/layoutTree.js';
 
 import Meta from 'gi://Meta';
 
@@ -1769,6 +1770,16 @@ export class ExtensionController {
             this._loadBehaviorSettingsFromGSettings();
             this._watchBehaviorSettings();
 
+            // Bridge from the Gtk prefs window to the shell-side editor.
+            this._watchPendingEditorRequest();
+
+            // Picker filtering — disabled layouts must actually disappear.
+            this._applyDisabledLayouts();
+            this._watchDisabledLayouts();
+
+            // Re-import custom layouts whenever the prefs window saves them.
+            this._watchCustomLayouts();
+
             this._logger.info('Settings loaded from GSettings');
         } catch (error) {
             this._logger.error('Failed to load settings', { error });
@@ -1799,10 +1810,24 @@ export class ExtensionController {
 
             let loadedCount = 0;
             for (const layoutDef of layoutsArray) {
-                if (layoutDef.id && layoutDef.layout) {
-                    if (layoutManager.registerLayout(layoutDef.id, layoutDef)) {
-                        loadedCount++;
-                    }
+                if (!layoutDef.id || !layoutDef.layout) continue;
+
+                // Heal sparse zone indices left over from saves made before
+                // LayoutTree.normalize() existed. snapHandler indexes the
+                // resolver output as `zones[zoneIndex]`, so any gap makes
+                // picker clicks silently no-op.
+                try {
+                    const tree = LayoutTree.fromDefinition(layoutDef.layout);
+                    tree.normalize();
+                    layoutDef.layout = tree.toDefinition();
+                } catch (error) {
+                    this._logger.warn('Failed to normalize layout on load', {
+                        id: layoutDef.id, error: String(error),
+                    });
+                }
+
+                if (layoutManager.registerLayout(layoutDef.id, layoutDef)) {
+                    loadedCount++;
                 }
             }
 
@@ -1978,6 +2003,168 @@ export class ExtensionController {
         } catch (error) {
             this._logger.error('Failed to load behavior settings', { error });
         }
+    }
+
+    /**
+     * Cross-process bridge: the Gtk prefs window writes a JSON request to
+     * `pending-layout-edit`; we open the in-shell editor accordingly and
+     * clear the value so the same request doesn't fire twice.
+     * @private
+     */
+    _watchPendingEditorRequest() {
+        if (!this._settings || !this._hasSettingsKey('pending-layout-edit')) {
+            return;
+        }
+
+        const signalId = this._settings.connect('changed::pending-layout-edit', () => {
+            this._processPendingEditorRequest();
+        });
+        this._settingsSignalIds.push(signalId);
+
+        // Drain any request that was set while the shell was disabled.
+        this._processPendingEditorRequest();
+    }
+
+    /**
+     * @private
+     */
+    _processPendingEditorRequest() {
+        let raw = '';
+        try {
+            raw = this._settings.get_string('pending-layout-edit');
+        } catch (_error) {
+            return;
+        }
+        if (!raw) {
+            return;
+        }
+
+        let request = null;
+        try {
+            request = JSON.parse(raw);
+        } catch (error) {
+            this._logger.warn('Bad pending-layout-edit JSON', { raw, error: String(error) });
+            this._clearPendingEditorRequest();
+            return;
+        }
+
+        try {
+            const editor = this._serviceContainer?.get('layoutEditor');
+            const layoutManager = this._serviceContainer?.get('layoutManager');
+            if (!editor || !layoutManager) {
+                this._logger.warn('Editor or LayoutManager unavailable for editor request');
+                return;
+            }
+
+            const action = request.action;
+            const layoutId = request.layoutId;
+
+            if (action === 'create') {
+                editor.show({});
+            } else if (action === 'edit' || action === 'clone') {
+                const layoutDef = layoutManager.getLayout(layoutId);
+                if (!layoutDef) {
+                    this._logger.warn('Layout not found for editor request', { layoutId, action });
+                    return;
+                }
+                editor.show({
+                    layout: layoutDef.layout,
+                    layoutId: action === 'edit' ? layoutDef.id : null,
+                    name: layoutDef.name || layoutDef.id,
+                    description: layoutDef.description || '',
+                    margin: layoutDef.margin || 0,
+                    padding: layoutDef.padding || 4,
+                    isClone: action === 'clone'
+                });
+            } else {
+                this._logger.warn('Unknown editor request action', { action });
+            }
+        } catch (error) {
+            this._logger.error('Failed to handle pending-layout-edit', { error });
+        } finally {
+            this._clearPendingEditorRequest();
+        }
+    }
+
+    /**
+     * @private
+     */
+    _clearPendingEditorRequest() {
+        try {
+            this._settings.set_string('pending-layout-edit', '');
+        } catch (_error) {
+            // SafeSettings already short-circuits on missing key; ignore.
+        }
+    }
+
+    /**
+     * Push the current `disabled-layouts` list into the picker bar so
+     * disabled IDs vanish from the overlay immediately.
+     * @private
+     */
+    _applyDisabledLayouts() {
+        try {
+            const layoutPickerBar = this._serviceContainer?.get('layoutPickerBar');
+            if (!layoutPickerBar) return;
+            const ids = this._hasSettingsKey('disabled-layouts')
+                ? this._settings.get_strv('disabled-layouts')
+                : [];
+            layoutPickerBar.updateConfig({ disabledLayoutIds: ids });
+        } catch (error) {
+            this._logger.warn('Failed to apply disabled-layouts filter', { error: String(error) });
+        }
+    }
+
+    /**
+     * Drop every custom layout currently registered and reload from
+     * GSettings. Called on `changed::custom-layouts` so the picker bar
+     * sees freshly-saved or freshly-deleted custom layouts immediately.
+     * @private
+     */
+    _reloadCustomLayouts() {
+        try {
+            const layoutManager = this._serviceContainer?.get('layoutManager');
+            if (!layoutManager) return;
+
+            for (const layout of layoutManager.getCustomLayouts()) {
+                layoutManager.deleteLayout(layout.id);
+            }
+            this._loadCustomLayouts();
+
+            // Re-apply the disabled filter (the new ID set may include layouts
+            // we just registered).
+            this._applyDisabledLayouts();
+
+            // Refresh whatever's already on screen.
+            try {
+                const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
+                if (layoutPickerBar?.refresh) layoutPickerBar.refresh();
+            } catch (_e) {}
+        } catch (error) {
+            this._logger.error('Failed to reload custom layouts', { error });
+        }
+    }
+
+    /**
+     * @private
+     */
+    _watchCustomLayouts() {
+        if (!this._settings || !this._hasSettingsKey('custom-layouts')) return;
+        const id = this._settings.connect('changed::custom-layouts', () => {
+            this._reloadCustomLayouts();
+        });
+        this._settingsSignalIds.push(id);
+    }
+
+    /**
+     * @private
+     */
+    _watchDisabledLayouts() {
+        if (!this._settings || !this._hasSettingsKey('disabled-layouts')) return;
+        const id = this._settings.connect('changed::disabled-layouts', () => {
+            this._applyDisabledLayouts();
+        });
+        this._settingsSignalIds.push(id);
     }
 
     /**

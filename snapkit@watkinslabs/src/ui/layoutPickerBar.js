@@ -49,6 +49,9 @@ export class LayoutPickerBar {
         this._layoutsBox = null;
         this._layoutWidgets = [];
 
+        // Layout IDs the user has hidden via prefs.
+        this._disabledIds = new Set();
+
         // Configuration
         this._config = {
             edge: 'top',                              // Which edge to show on
@@ -355,6 +358,7 @@ export class LayoutPickerBar {
         // Get built-in layouts (returns array of layout objects)
         const builtInLayouts = this._layoutManager.getBuiltinLayouts();
         for (const layoutDef of builtInLayouts) {
+            if (this._disabledIds.has(layoutDef.id)) continue;
             layouts.push({
                 id: layoutDef.id,
                 layout: layoutDef.layout,
@@ -365,6 +369,7 @@ export class LayoutPickerBar {
         // Get custom layouts (returns array of layout objects)
         const customLayouts = this._layoutManager.getCustomLayouts();
         for (const layoutDef of customLayouts) {
+            if (this._disabledIds.has(layoutDef.id)) continue;
             layouts.push({
                 id: layoutDef.id,
                 layout: layoutDef.layout,
@@ -738,17 +743,19 @@ export class LayoutPickerBar {
             zoneIndex
         });
 
-        // Get focused window
         const window = global.display.focus_window;
-        if (!window) {
-            this._logger.warn('No focused window to snap');
-            this.hide();
-            return;
-        }
+        const validWindow = window && this._isValidWindow(window);
 
-        // Check if window is valid for snapping
-        if (!this._isValidWindow(window)) {
-            this._logger.warn('Window not valid for snapping');
+        if (!validWindow) {
+            // No window to snap — interpret the click as "make this the
+            // active layout for the monitor" so subsequent drops use it.
+            this._logger.debug('No snap target — switching active layout instead', {
+                layoutId: layoutData.id, monitorIndex: this._monitorIndex,
+            });
+            this._eventBus.emit('layout-switched', {
+                layoutId: layoutData.id,
+                monitorIndex: this._monitorIndex,
+            });
             this.hide();
             return;
         }
@@ -1142,6 +1149,11 @@ export class LayoutPickerBar {
      * @param {Object} config
      */
     updateConfig(config) {
+        // Layout filtering
+        if (Array.isArray(config.disabledLayoutIds)) {
+            this._disabledIds = new Set(config.disabledLayoutIds);
+        }
+
         // Behavior settings
         if (config.edge) {
             this._config.edge = config.edge;

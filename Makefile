@@ -13,7 +13,7 @@ ZIP_NAME = $(EXTENSION_UUID).v$(VERSION).shell-extension.zip
 
 # Extension files to install/package
 FILES = extension.js prefs.js metadata.json
-DIRS = src schemas
+DIRS = src schemas prefs-ui
 
 # Colors for output
 C_RED    := \033[0;31m
@@ -28,7 +28,7 @@ P_OK     := $(C_GREEN)[✓]$(C_NC)
 P_WARN   := $(C_YELLOW)[!]$(C_NC)
 P_ERR    := $(C_RED)[✗]$(C_NC)
 
-.PHONY: help install uninstall enable disable reload dev launch restart clean deploy build compile-schemas check-deps status version bump release test validate
+.PHONY: help install uninstall enable disable reload dev dev-install dev-extras launch restart clean deploy build compile-schemas check-deps status version bump release test validate
 
 help:
 	@echo "SnapKit Extension - Available targets:"
@@ -39,7 +39,8 @@ help:
 	@echo "    make enable         - Enable the extension"
 	@echo "    make disable        - Disable the extension"
 	@echo "    make reload         - Reinstall and reload extension"
-	@echo "    make dev            - Test in nested GNOME Shell (DEV_RESOLUTION=WxH)"
+	@echo "    make dev            - Test in nested GNOME Shell (DEV_RESOLUTION=WxH,"
+	@echo "                          DEV_EXTRA_EXTENSIONS=\"uuid1 uuid2\" mirrors host extensions)"
 	@echo "    make launch         - Alias for make dev"
 	@echo "    make restart        - Restart GNOME Shell (X11 only)"
 	@echo ""
@@ -167,12 +168,75 @@ reload: install
 	@gnome-extensions enable $(EXTENSION_UUID) 2>/dev/null || true
 	@printf "$(P_WARN) Note: GJS caches imports. If changes don't appear, use 'make dev' or log out/in\n"
 
-DEV_RESOLUTION ?= 2560x1008
+DEV_RESOLUTION ?= 1280x756
 
-dev: install
+# Isolated install root for `make dev`. Pointing the nested gnome-shell at
+# its own XDG_DATA_HOME means we never overwrite the host session's
+# extension files mid-flight (which is what caused the host shell to load
+# half-written code and crash).
+DEV_HOME = $(abspath $(BUILD_DIR)/dev-home)
+DEV_DATA_DIR = $(DEV_HOME)/.local/share
+DEV_EXT_DIR = $(DEV_DATA_DIR)/gnome-shell/extensions
+DEV_INSTALL_DIR = $(DEV_EXT_DIR)/$(EXTENSION_UUID)
+
+# Other host-installed extensions to mirror into the dev XDG_DATA_HOME so
+# they're available inside the nested shell. Override at the command line:
+#   make dev DEV_EXTRA_EXTENSIONS="dash-to-dock@micxgx.gmail.com other@uuid"
+DEV_EXTRA_EXTENSIONS ?= dash-to-dock@micxgx.gmail.com
+
+dev-install: check-deps compile-schemas
+	@printf "$(P_INFO) Staging $(EXTENSION_UUID) into isolated dev home...\n"
+	@for file in $(FILES); do \
+		if [ ! -f "$(EXTENSION_DIR)/$$file" ]; then \
+			printf "$(P_ERR) Missing required file: $(EXTENSION_DIR)/$$file\n"; \
+			exit 1; \
+		fi; \
+	done
+	@for dir in $(DIRS); do \
+		if [ ! -d "$(EXTENSION_DIR)/$$dir" ]; then \
+			printf "$(P_ERR) Missing required directory: $(EXTENSION_DIR)/$$dir\n"; \
+			exit 1; \
+		fi; \
+	done
+	@rm -rf $(DEV_INSTALL_DIR)
+	@mkdir -p $(DEV_INSTALL_DIR) || { printf "$(P_ERR) Failed to create dev install directory\n"; exit 1; }
+	@cp -r $(addprefix $(EXTENSION_DIR)/, $(FILES)) $(DEV_INSTALL_DIR)/ || { printf "$(P_ERR) Failed to copy files\n"; exit 1; }
+	@cp -r $(addprefix $(EXTENSION_DIR)/, $(DIRS)) $(DEV_INSTALL_DIR)/ || { printf "$(P_ERR) Failed to copy directories\n"; exit 1; }
+	@printf "$(P_OK) Dev staging complete: $(DEV_INSTALL_DIR)\n"
+
+dev-extras:
+	@if [ -z "$(DEV_EXTRA_EXTENSIONS)" ]; then \
+		printf "$(P_INFO) No extra extensions to mirror\n"; \
+		exit 0; \
+	fi
+	@printf "$(P_INFO) Mirroring host extensions into dev home...\n"
+	@mkdir -p $(DEV_EXT_DIR) || { printf "$(P_ERR) Failed to create dev ext dir\n"; exit 1; }
+	@for uuid in $(DEV_EXTRA_EXTENSIONS); do \
+		src="$(HOME)/.local/share/gnome-shell/extensions/$$uuid"; \
+		if [ -d "$$src" ]; then \
+			rm -rf "$(DEV_EXT_DIR)/$$uuid"; \
+			cp -a "$$src" "$(DEV_EXT_DIR)/" && printf "$(P_OK) mirrored $$uuid\n" || { \
+				printf "$(P_ERR) failed to copy $$uuid\n"; exit 1; \
+			}; \
+		else \
+			printf "$(P_WARN) skipped $$uuid (not installed in host)\n"; \
+		fi; \
+	done
+
+dev: dev-install dev-extras
 	@printf "$(P_INFO) Starting nested GNOME Shell ($(DEV_RESOLUTION))...\n"
+	@printf "$(P_INFO) Using isolated XDG_DATA_HOME=$(DEV_DATA_DIR)\n"
 	@printf "$(P_WARN) This opens a new GNOME Shell window. Close it to stop testing.\n"
-	@MUTTER_DEBUG_DUMMY_MODE_SPECS=$(DEV_RESOLUTION) dbus-run-session -- gnome-shell --nested --wayland 2>&1 | grep -v "^$$" || true
+	@printf "$(P_WARN) Your live session's installed extension is NOT touched.\n"
+	@# scripts/dev-launch.sh runs gnome-shell --nested --wayland and, in
+	@# the background, watches XDG_RUNTIME_DIR for the new wayland-N
+	@# socket mutter creates. Once it appears, it calls
+	@# dbus-update-activation-environment so D-Bus-activated services
+	@# (gnome-extensions-app, the prefs gjs process, etc.) attach to the
+	@# nested compositor instead of the host session.
+	@XDG_DATA_HOME=$(DEV_DATA_DIR) \
+		MUTTER_DEBUG_DUMMY_MODE_SPECS=$(DEV_RESOLUTION) \
+		dbus-run-session -- bash scripts/dev-launch.sh 2>&1 | grep -v "^$$" || true
 	@printf "$(P_OK) Nested session ended\n"
 
 launch: dev

@@ -301,6 +301,70 @@ export class LayoutTree {
     }
 
     /**
+     * Collapse the parent split of a leaf back into a single zone. The
+     * sibling subtree is discarded and zone indices are renumbered so the
+     * result is still a contiguous 0..N-1 sequence.
+     *
+     * @param {number} zoneIndex
+     * @returns {number|null} The renumbered zone index of the surviving
+     *   leaf, or null if the operation isn't possible (no parent / no leaf).
+     */
+    unsplitZone(zoneIndex) {
+        const leaf = this.findLeafByZone(zoneIndex);
+        if (!leaf || !leaf.parent) {
+            return null;
+        }
+
+        const parent = leaf.parent;
+        const grandparent = parent.parent;
+        const survivor = new LeafNode(0); // zoneIndex set during renumber
+        survivor.parent = grandparent;
+
+        if (grandparent) {
+            if (grandparent.left === parent) {
+                grandparent.left = survivor;
+            } else if (grandparent.right === parent) {
+                grandparent.right = survivor;
+            }
+        } else {
+            this.root = survivor;
+        }
+
+        this._renumberLeaves();
+        return survivor.zoneIndex;
+    }
+
+    /**
+     * Public alias — normalize leaf indices to 0..N-1 in in-order order.
+     * `splitZone` intentionally allocates new IDs as `max+1` / `max+2` to
+     * avoid clashing with stable runtime references, so callers that
+     * persist or hand the tree off to the snap pipeline must normalize
+     * first; otherwise `snapHandler` (which array-indexes the resolver
+     * output by zoneIndex) silently rejects "invalid zone index".
+     */
+    normalize() {
+        this._renumberLeaves();
+    }
+
+    /**
+     * Re-number all leaves in in-order traversal so indices are 0..N-1.
+     * @private
+     */
+    _renumberLeaves() {
+        let next = 0;
+        const walk = (node) => {
+            if (!node) return;
+            if (node.zoneIndex !== undefined) {
+                node.zoneIndex = next++;
+                return;
+            }
+            walk(node.left);
+            walk(node.right);
+        };
+        walk(this.root);
+    }
+
+    /**
      * Update split ratio for a branch node
      * Used when dividers are dragged
      *
@@ -419,6 +483,18 @@ export class LayoutTree {
      * @returns {LayoutTree}
      */
     static fromDefinition(layoutDef) {
+        // Accept simple grids in addition to {tree: ...}.
+        if (Array.isArray(layoutDef)) {
+            return LayoutTree.createGrid(layoutDef[0], layoutDef[1]);
+        }
+        if (layoutDef && Array.isArray(layoutDef.layout)) {
+            return LayoutTree.createGrid(layoutDef.layout[0], layoutDef.layout[1]);
+        }
+
+        const root = (layoutDef && layoutDef.tree) ? layoutDef.tree
+            : (layoutDef && layoutDef.layout && layoutDef.layout.tree) ? layoutDef.layout.tree
+            : layoutDef;
+
         const buildNode = (nodeDef) => {
             if (nodeDef.zone !== undefined) {
                 // Leaf node
@@ -431,6 +507,30 @@ export class LayoutTree {
             return new BranchNode(nodeDef.direction, nodeDef.ratio, left, right);
         };
 
-        return new LayoutTree(buildNode(layoutDef.tree));
+        return new LayoutTree(buildNode(root));
+    }
+
+    /**
+     * Serialize the tree back into a full-spec layout definition the
+     * resolver/persistence layer understands. Inverse of fromDefinition.
+     *
+     * @returns {Object} { tree: { direction, ratio, left, right } | { zone } }
+     */
+    toDefinition() {
+        const serialize = (node) => {
+            if (!node) {
+                return { zone: 0 };
+            }
+            if (node instanceof LeafNode || node.zoneIndex !== undefined) {
+                return { zone: node.zoneIndex };
+            }
+            return {
+                direction: node.direction,
+                ratio: node.ratio,
+                left: serialize(node.left),
+                right: serialize(node.right)
+            };
+        };
+        return { tree: serialize(this.root) };
     }
 }

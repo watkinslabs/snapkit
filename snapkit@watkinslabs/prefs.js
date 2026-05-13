@@ -11,10 +11,12 @@ import Gio from 'gi://Gio';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import { LayoutManager } from './src/btree/manager/layoutManager.js';
+import { openLayoutEditor } from './prefs-ui/layoutEditor.js';
 
 export default class SnapKitPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
+        this._window = window;
 
         // Appearance Page
         const appearancePage = new Adw.PreferencesPage({
@@ -159,34 +161,7 @@ export default class SnapKitPreferences extends ExtensionPreferences {
 
         this._addSwitchRow(workspaceGroup, settings, 'remember-per-workspace', 'Per-Workspace Layouts', 'Remember different layouts for each workspace');
 
-        // Advanced Layout Storage Group
-        const advancedStorageGroup = new Adw.PreferencesGroup({
-            title: 'Advanced Layout Storage',
-            description: 'Directly edit persisted layout JSON values',
-        });
-        layoutPage.add(advancedStorageGroup);
-
-        this._addEntryRow(
-            advancedStorageGroup,
-            settings,
-            'per-monitor-layouts',
-            'Per-Monitor Layouts JSON',
-            'Map of monitor index to layout ID'
-        );
-        this._addEntryRow(
-            advancedStorageGroup,
-            settings,
-            'custom-layouts',
-            'Custom Layouts JSON',
-            'Serialized custom layout definitions'
-        );
-        this._addEntryRow(
-            advancedStorageGroup,
-            settings,
-            'divider-overrides',
-            'Divider Overrides JSON',
-            'Serialized divider position overrides'
-        );
+        this._addLayoutManagementGroups(layoutPage, settings);
 
         // About Page
         const aboutPage = new Adw.PreferencesPage({
@@ -237,19 +212,318 @@ export default class SnapKitPreferences extends ExtensionPreferences {
         return row;
     }
 
-    _addEntryRow(group, settings, key, title, subtitle) {
-        const row = new Adw.EntryRow({
-            title: title,
+    _addLayoutManagementGroups(layoutPage, settings) {
+        // --- Custom layouts (editable) ---
+        const customGroup = new Adw.PreferencesGroup({
+            title: 'Custom Layouts',
+            description: 'Layouts you have created. Click Edit to open the visual designer in the shell overlay.',
         });
-        if (subtitle) {
-            row.set_tooltip_text(subtitle);
+
+        const addBtn = new Gtk.Button({
+            icon_name: 'list-add-symbolic',
+            tooltip_text: 'Create new layout',
+            valign: Gtk.Align.CENTER,
+            css_classes: ['flat'],
+        });
+        addBtn.connect('clicked', () => {
+            this._requestEditor(settings, { action: 'create' });
+        });
+        customGroup.set_header_suffix(addBtn);
+        layoutPage.add(customGroup);
+
+        const customEmptyRow = new Adw.ActionRow({
+            title: 'No custom layouts yet',
+            subtitle: 'Click + to create one, or Duplicate a built-in below to start from a template.',
+        });
+        customGroup.add(customEmptyRow);
+
+        // --- Built-in layouts (read-only, duplicate to edit) ---
+        const builtinGroup = new Adw.PreferencesGroup({
+            title: 'Built-in Layouts',
+            description: 'Shipped with SnapKit. Use Duplicate to start a new layout based on one of these.',
+        });
+        layoutPage.add(builtinGroup);
+
+        // --- Per-monitor assignment ---
+        const monitorGroup = new Adw.PreferencesGroup({
+            title: 'Per-Monitor Layout',
+            description: 'Default layout shown on each monitor.',
+        });
+        layoutPage.add(monitorGroup);
+
+        // --- Divider overrides reset ---
+        const overridesGroup = new Adw.PreferencesGroup({
+            title: 'Manual Divider Adjustments',
+            description: 'Custom divider positions saved when you drag splits at runtime.',
+        });
+        layoutPage.add(overridesGroup);
+
+        const overridesRow = new Adw.ActionRow({
+            title: 'Saved overrides',
+            subtitle: 'No overrides saved',
+        });
+        const resetBtn = new Gtk.Button({
+            label: 'Clear All',
+            valign: Gtk.Align.CENTER,
+            css_classes: ['destructive-action'],
+            sensitive: false,
+        });
+        resetBtn.connect('clicked', () => {
+            settings.set_string('divider-overrides', '{}');
+        });
+        overridesRow.add_suffix(resetBtn);
+        overridesGroup.add(overridesRow);
+
+        const refresh = () => {
+            this._refreshCustomLayoutsList(customGroup, customEmptyRow, settings);
+            this._refreshBuiltinLayoutsList(builtinGroup, settings);
+            this._refreshMonitorAssignmentList(monitorGroup, settings);
+            this._refreshOverridesRow(overridesRow, resetBtn, settings);
+        };
+        refresh();
+
+        // Stay in sync with shell-side changes.
+        for (const key of ['custom-layouts', 'per-monitor-layouts', 'divider-overrides', 'disabled-layouts']) {
+            settings.connect(`changed::${key}`, () => refresh());
         }
-        row.set_text(settings.get_string(key));
-        row.connect('changed', () => {
-            settings.set_string(key, row.get_text());
+    }
+
+    _readDisabledLayouts(settings) {
+        try {
+            return new Set(settings.get_strv('disabled-layouts'));
+        } catch (_error) {
+            return new Set();
+        }
+    }
+
+    _writeDisabledLayouts(settings, set) {
+        try {
+            settings.set_strv('disabled-layouts', [...set].sort());
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to update disabled-layouts', error);
+        }
+    }
+
+    _addEnableSwitch(row, settings, layoutId) {
+        const sw = new Gtk.Switch({
+            active: !this._readDisabledLayouts(settings).has(layoutId),
+            valign: Gtk.Align.CENTER,
+            tooltip_text: 'Show in picker',
         });
-        group.add(row);
-        return row;
+        sw.connect('state-set', (_w, state) => {
+            const disabled = this._readDisabledLayouts(settings);
+            if (state) {
+                disabled.delete(layoutId);
+            } else {
+                disabled.add(layoutId);
+            }
+            this._writeDisabledLayouts(settings, disabled);
+            return false; // let GTK update the switch state
+        });
+        row.add_suffix(sw);
+        return sw;
+    }
+
+    _requestEditor(settings, payload) {
+        // Open the in-process Adw editor. Direct call beats the pending-layout-edit
+        // GSettings round-trip and gives us a real modal transient on the prefs window.
+        try {
+            openLayoutEditor(this._window, settings, {
+                mode: payload.action,            // 'create' | 'edit' | 'clone'
+                layoutId: payload.layoutId || null,
+            });
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to open layout editor', error);
+        }
+    }
+
+    _readCustomLayouts(settings) {
+        try {
+            const raw = settings.get_string('custom-layouts');
+            if (!raw || raw === '{}' || raw === '[]') {
+                return [];
+            }
+            const parsed = JSON.parse(raw);
+            const arr = Array.isArray(parsed) ? parsed : Object.values(parsed);
+            return arr.filter(l => l && l.id);
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to parse custom-layouts', error);
+            return [];
+        }
+    }
+
+    _refreshCustomLayoutsList(group, emptyRow, settings) {
+        // Clear previously-rendered custom rows (keep the emptyRow widget).
+        for (const row of this._customRows ?? []) {
+            group.remove(row);
+        }
+        this._customRows = [];
+
+        const layouts = this._readCustomLayouts(settings);
+        emptyRow.set_visible(layouts.length === 0);
+
+        for (const layout of layouts) {
+            const row = new Adw.ActionRow({
+                title: layout.name || layout.id,
+                subtitle: layout.description || layout.id,
+            });
+
+            this._addEnableSwitch(row, settings, layout.id);
+
+            const editBtn = new Gtk.Button({
+                icon_name: 'document-edit-symbolic',
+                tooltip_text: 'Edit layout',
+                valign: Gtk.Align.CENTER,
+                css_classes: ['flat'],
+            });
+            editBtn.connect('clicked', () => {
+                this._requestEditor(settings, { action: 'edit', layoutId: layout.id });
+            });
+            row.add_suffix(editBtn);
+
+            const delBtn = new Gtk.Button({
+                icon_name: 'user-trash-symbolic',
+                tooltip_text: 'Delete',
+                valign: Gtk.Align.CENTER,
+                css_classes: ['flat', 'destructive-action'],
+            });
+            delBtn.connect('clicked', () => {
+                this._deleteCustomLayout(settings, layout.id);
+            });
+            row.add_suffix(delBtn);
+
+            group.add(row);
+            this._customRows.push(row);
+        }
+    }
+
+    _refreshBuiltinLayoutsList(group, settings) {
+        for (const row of this._builtinRows ?? []) {
+            group.remove(row);
+        }
+        this._builtinRows = [];
+
+        let builtins = [];
+        try {
+            const layoutManager = new LayoutManager();
+            builtins = layoutManager.getBuiltinLayouts();
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to enumerate built-ins', error);
+            builtins = [];
+        }
+
+        for (const layout of builtins) {
+            const row = new Adw.ActionRow({
+                title: layout.name || layout.id,
+                subtitle: layout.description || layout.id,
+            });
+
+            this._addEnableSwitch(row, settings, layout.id);
+
+            group.add(row);
+            this._builtinRows.push(row);
+        }
+    }
+
+    _deleteCustomLayout(settings, layoutId) {
+        try {
+            const raw = settings.get_string('custom-layouts');
+            const parsed = raw && raw !== '{}' ? JSON.parse(raw) : {};
+
+            let next;
+            if (Array.isArray(parsed)) {
+                next = parsed.filter(l => l?.id !== layoutId);
+            } else {
+                next = { ...parsed };
+                delete next[layoutId];
+            }
+            settings.set_string('custom-layouts', JSON.stringify(next));
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to delete layout', error);
+        }
+    }
+
+    _readPerMonitorLayouts(settings) {
+        try {
+            const raw = settings.get_string('per-monitor-layouts');
+            if (!raw || raw === '{}') {
+                return {};
+            }
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (error) {
+            console.error('[SnapKit][Prefs] Failed to parse per-monitor-layouts', error);
+            return {};
+        }
+    }
+
+    _refreshMonitorAssignmentList(group, settings) {
+        for (const row of this._monitorRows ?? []) {
+            group.remove(row);
+        }
+        this._monitorRows = [];
+
+        const display = Gdk.Display.get_default();
+        const monitors = display ? display.get_monitors() : null;
+        const monitorCount = monitors ? monitors.get_n_items() : 0;
+
+        if (monitorCount === 0) {
+            const row = new Adw.ActionRow({
+                title: 'No monitors detected',
+                subtitle: 'Open this page from a graphical session to assign per-monitor layouts.',
+            });
+            group.add(row);
+            this._monitorRows.push(row);
+            return;
+        }
+
+        const allLayouts = this._getLayoutOptions(settings);
+        const assignments = this._readPerMonitorLayouts(settings);
+
+        for (let i = 0; i < monitorCount; i++) {
+            const monitor = monitors.get_item(i);
+            const label = monitor?.get_connector?.() || monitor?.get_model?.() || `Monitor ${i + 1}`;
+
+            const row = new Adw.ComboRow({
+                title: label,
+                subtitle: `Index ${i}`,
+            });
+            const model = new Gtk.StringList();
+            allLayouts.forEach(l => model.append(l.name));
+            row.set_model(model);
+
+            const current = assignments[i] || assignments[String(i)] || settings.get_string('default-layout');
+            const idx = allLayouts.findIndex(l => l.id === current);
+            row.set_selected(idx >= 0 ? idx : 0);
+
+            row.connect('notify::selected', () => {
+                const sel = row.get_selected();
+                if (sel < 0 || sel >= allLayouts.length) {
+                    return;
+                }
+                const next = { ...this._readPerMonitorLayouts(settings) };
+                next[i] = allLayouts[sel].id;
+                settings.set_string('per-monitor-layouts', JSON.stringify(next));
+            });
+
+            group.add(row);
+            this._monitorRows.push(row);
+        }
+    }
+
+    _refreshOverridesRow(row, resetBtn, settings) {
+        let count = 0;
+        try {
+            const raw = settings.get_string('divider-overrides');
+            if (raw && raw !== '{}') {
+                const parsed = JSON.parse(raw);
+                count = Object.keys(parsed || {}).length;
+            }
+        } catch (_error) {
+            count = 0;
+        }
+        row.set_subtitle(count === 0 ? 'No overrides saved' : `${count} override${count === 1 ? '' : 's'} saved`);
+        resetBtn.set_sensitive(count > 0);
     }
 
     _addShortcutRow(group, settings, key, title, subtitle) {

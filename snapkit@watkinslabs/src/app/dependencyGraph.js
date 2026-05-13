@@ -26,7 +26,6 @@ import { InteractionStateManager } from '../interaction/interactionStateManager.
 
 import { WindowSelector } from '../ui/windowSelector.js';
 import { LayoutEditor } from '../ui/layoutEditor.js';
-import { LayoutSwitcher } from '../ui/layoutSwitcher.js';
 import { LayoutPickerBar } from '../ui/layoutPickerBar.js';
 
 import { AppearancePreferences } from '../preferences/appearancePreferences.js';
@@ -134,11 +133,6 @@ export function registerServices(controller) {
     sc.register('layoutEditor', () => new LayoutEditor(
         sc.get('layoutResolver'),
         sc.get('layoutManager'),
-        sc.get('eventBus')
-    ), true);
-    sc.register('layoutSwitcher', () => new LayoutSwitcher(
-        sc.get('layoutManager'),
-        sc.get('layoutResolver'),
         sc.get('eventBus')
     ), true);
     sc.register('layoutPickerBar', () => new LayoutPickerBar(

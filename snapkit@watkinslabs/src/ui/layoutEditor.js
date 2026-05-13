@@ -14,11 +14,15 @@
 
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import { Logger } from '../core/logger.js';
 import { LayoutTree } from '../btree/tree/layoutTree.js';
+
+const PREVIEW_WIDTH = 500;
+const PREVIEW_HEIGHT = 400;
 
 export class LayoutEditor {
     /**
@@ -66,6 +70,11 @@ export class LayoutEditor {
         this._paddingSlider = null;
         this._marginValueLabel = null;
         this._paddingValueLabel = null;
+        this._statusLabel = null;
+        this._backdrop = null;
+        this._modalGrab = null;
+        this._keyPressId = 0;
+        this._backdropClickId = 0;
 
         // Signals
         this._signalIds = [];
@@ -82,6 +91,21 @@ export class LayoutEditor {
             return;
         }
 
+        // Backdrop dim — covers the full screen, click cancels.
+        this._backdrop = new St.Widget({
+            style: 'background-color: rgba(0, 0, 0, 0.45);',
+            reactive: true,
+            can_focus: false,
+            visible: false,
+            x: 0,
+            y: 0
+        });
+        parent.add_child(this._backdrop);
+        this._backdropClickId = this._backdrop.connect('button-press-event', () => {
+            this._cancel();
+            return Clutter.EVENT_STOP;
+        });
+
         // Create main container
         this._container = new St.BoxLayout({
             style: `
@@ -92,6 +116,8 @@ export class LayoutEditor {
             `,
             vertical: true,
             reactive: true,
+            can_focus: true,
+            track_hover: true,
             visible: false
         });
 
@@ -237,7 +263,35 @@ export class LayoutEditor {
         descRow.add_child(this._descriptionEntry);
         header.add_child(descRow);
 
+        // Inline status / error feedback
+        this._statusLabel = new St.Label({
+            text: '',
+            style: 'color: rgba(255, 200, 120, 0.95); font-size: 12px; padding-top: 4px;',
+            visible: false
+        });
+        header.add_child(this._statusLabel);
+
         return header;
+    }
+
+    /**
+     * Show a transient status message in the editor (visible to the user,
+     * not just buried in journal logs).
+     * @private
+     */
+    _setStatus(message, isError = false) {
+        if (!this._statusLabel) return;
+        if (!message) {
+            this._statusLabel.set_text('');
+            this._statusLabel.visible = false;
+            return;
+        }
+        this._statusLabel.set_style(
+            `color: ${isError ? 'rgba(255, 120, 120, 0.95)' : 'rgba(180, 220, 255, 0.95)'};`
+            + ' font-size: 12px; padding-top: 4px;'
+        );
+        this._statusLabel.set_text(message);
+        this._statusLabel.visible = true;
     }
 
     /**
@@ -573,12 +627,14 @@ export class LayoutEditor {
             workArea = null
         } = options;
 
-        // Store work area
+        // Use a fixed-size preview surface; previewContainer.width/height are
+        // 0 before the first allocation pass, which made every split render
+        // a zero-pixel zone (the "split buttons don't work" symptom).
         this._workArea = workArea || {
             x: 0,
             y: 0,
-            width: this._previewContainer.width,
-            height: this._previewContainer.height
+            width: PREVIEW_WIDTH,
+            height: PREVIEW_HEIGHT
         };
 
         // Load layout
@@ -595,9 +651,17 @@ export class LayoutEditor {
             this._isClone = false;
         }
 
-        // Set layout properties
-        this._layoutName = isClone ? `${name} (Copy)` : name;
-        this._layoutId = isClone ? '' : (layoutId || '');
+        // Default name/id when creating a new layout, so Save isn't a silent
+        // no-op when the user hits it without filling the fields manually.
+        const isNew = !layoutId && !isClone;
+        if (isNew && !name) {
+            const auto = this._nextAutoLayoutId();
+            this._layoutName = auto.name;
+            this._layoutId = auto.id;
+        } else {
+            this._layoutName = isClone ? `${name} (Copy)` : name;
+            this._layoutId = isClone ? this._suggestCloneId(layoutId) : (layoutId || '');
+        }
         this._layoutDescription = description;
         this._margin = margin;
         this._padding = padding;
@@ -607,17 +671,21 @@ export class LayoutEditor {
         this._nameEntry.set_text(this._layoutName);
         this._idEntry.set_text(this._layoutId);
         this._descriptionEntry.set_text(this._layoutDescription);
+        this._setStatus('');
 
-        // If cloning, focus on ID field since user needs to provide new ID
-        if (isClone) {
-            this._idEntry.grab_key_focus();
+        // Render preview, then auto-select zone 0 so Split buttons work
+        // immediately without requiring a click on the canvas first.
+        this._renderPreview();
+        if (this._zoneActors.length > 0) {
+            this._selectZone(this._zoneActors[0].zone.zoneIndex);
         }
 
-        // Render preview
-        this._renderPreview();
-
-        // Position editor
+        // Size + position over the primary monitor, with backdrop fill.
         const monitor = Main.layoutManager.primaryMonitor;
+        this._backdrop.set_size(monitor.width, monitor.height);
+        this._backdrop.set_position(monitor.x, monitor.y);
+        this._backdrop.show();
+
         this._container.set_position(
             monitor.x + (monitor.width - this._container.width) / 2,
             monitor.y + (monitor.height - this._container.height) / 2
@@ -632,11 +700,74 @@ export class LayoutEditor {
             mode: Clutter.AnimationMode.EASE_OUT_QUAD
         });
 
+        // Modal grab. Without this, St.Entry can't receive keyboard input
+        // (typing into name/id is dead) and clicks pass through to other
+        // windows — including the prefs window that opened us.
+        try {
+            this._modalGrab = Main.pushModal(this._container, {
+                actionMode: Shell.ActionMode.NORMAL
+            });
+            if (this._modalGrab && this._modalGrab.get_seat_state) {
+                // Newer GNOME — grab object returned, valid.
+            }
+        } catch (error) {
+            this._logger.warn('pushModal failed; entries may be uneditable', { error: String(error) });
+            this._modalGrab = null;
+        }
+
+        // ESC = cancel
+        this._keyPressId = this._container.connect('key-press-event', (_actor, event) => {
+            if (event.get_key_symbol() === Clutter.KEY_Escape) {
+                this._cancel();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._container.grab_key_focus();
+
+        // Position the cursor where the user is most likely to start typing.
+        if (isClone) {
+            this._idEntry.grab_key_focus();
+        } else if (isNew) {
+            this._nameEntry.grab_key_focus();
+        }
+
         this._logger.debug('Layout editor shown', {
             layoutId,
             isClone,
-            isNew: !layoutId && !isClone
+            isNew
         });
+    }
+
+    /**
+     * Generate the next free `Custom Layout N` / `custom-layout-N` pair.
+     * @private
+     */
+    _nextAutoLayoutId() {
+        const used = new Set(this._layoutManager.getCustomLayouts().map(l => l.id));
+        for (let i = 1; i < 1000; i++) {
+            const id = `custom-layout-${i}`;
+            if (!used.has(id)) {
+                return { id, name: `Custom Layout ${i}` };
+            }
+        }
+        return { id: `custom-layout-${Date.now()}`, name: 'Custom Layout' };
+    }
+
+    /**
+     * @private
+     */
+    _suggestCloneId(sourceId) {
+        const base = (sourceId || 'layout') + '-copy';
+        const used = new Set([
+            ...this._layoutManager.getCustomLayouts().map(l => l.id),
+            ...this._layoutManager.getBuiltinLayouts().map(l => l.id)
+        ]);
+        if (!used.has(base)) return base;
+        for (let i = 2; i < 1000; i++) {
+            if (!used.has(`${base}-${i}`)) return `${base}-${i}`;
+        }
+        return `${base}-${Date.now()}`;
     }
 
     /**
@@ -645,6 +776,23 @@ export class LayoutEditor {
     hide() {
         if (!this._container || !this._container.visible) {
             return;
+        }
+
+        // Drop the modal grab + ESC handler before fading.
+        if (this._keyPressId) {
+            try { this._container.disconnect(this._keyPressId); } catch (_e) {}
+            this._keyPressId = 0;
+        }
+        if (this._modalGrab) {
+            try { Main.popModal(this._modalGrab); } catch (_e) {}
+            this._modalGrab = null;
+        } else {
+            // Older GNOME API took the actor itself.
+            try { Main.popModal(this._container); } catch (_e) {}
+        }
+
+        if (this._backdrop) {
+            this._backdrop.hide();
         }
 
         // Fade out
@@ -791,19 +939,32 @@ export class LayoutEditor {
      */
     _splitSelectedZone(direction) {
         if (this._selectedZone === null) {
-            this._logger.warn('No zone selected');
+            this._setStatus('Select a zone in the preview first, then split.', true);
             return;
         }
 
         try {
             const dir = direction === 'horizontal' ? 'h' : 'v';
-            this._layoutTree.splitZone(this._selectedZone, dir, 0.5);
+            const ok = this._layoutTree.splitZone(this._selectedZone, dir, 0.5);
+            if (!ok) {
+                this._setStatus(`Could not split zone ${this._selectedZone + 1}.`, true);
+                return;
+            }
             this._isModified = true;
+            const previousIndex = this._selectedZone;
             this._renderPreview();
-
-            this._logger.debug('Zone split', { zone: this._selectedZone, direction });
+            // Re-select an existing zone so the user can keep splitting.
+            const fallback = this._zoneActors[0]?.zone?.zoneIndex;
+            const target = this._zoneActors.find(z => z.zone.zoneIndex === previousIndex)?.zone?.zoneIndex
+                ?? fallback;
+            if (target !== undefined) {
+                this._selectZone(target);
+            }
+            this._setStatus('');
+            this._logger.debug('Zone split', { zone: previousIndex, direction });
         } catch (error) {
             this._logger.error('Failed to split zone', { error });
+            this._setStatus(`Split failed: ${error.message || error}`, true);
         }
     }
 
@@ -817,7 +978,10 @@ export class LayoutEditor {
         this._layoutTree = LayoutTree.createGrid(rows, cols);
         this._isModified = true;
         this._renderPreview();
-
+        if (this._zoneActors.length > 0) {
+            this._selectZone(this._zoneActors[0].zone.zoneIndex);
+        }
+        this._setStatus(`Loaded ${rows}×${cols} grid.`);
         this._logger.debug('Quick layout loaded', { rows, cols });
     }
 
@@ -835,27 +999,28 @@ export class LayoutEditor {
         const id = this._idEntry.get_text().trim();
         const description = this._descriptionEntry.get_text().trim();
 
-        // Validate
+        // Validate, with feedback the user can actually see.
         if (!name) {
-            this._logger.warn('Layout name is required');
-            // In a real implementation, show error message to user
+            this._setStatus('Name is required.', true);
+            this._nameEntry.grab_key_focus();
             return;
         }
 
         if (!id) {
-            this._logger.warn('Layout ID is required');
+            this._setStatus('ID is required (lowercase letters, numbers, hyphens).', true);
+            this._idEntry.grab_key_focus();
             return;
         }
 
-        // Validate ID format (lowercase, hyphens, no spaces)
         if (!/^[a-z0-9-]+$/.test(id)) {
-            this._logger.warn('Layout ID must contain only lowercase letters, numbers, and hyphens');
+            this._setStatus('ID may only contain lowercase letters, numbers, and hyphens.', true);
+            this._idEntry.grab_key_focus();
             return;
         }
 
-        // Check if ID is already taken (unless updating the same layout)
         if (this._originalLayoutId !== id && this._layoutManager.hasLayout(id)) {
-            this._logger.warn(`Layout ID '${id}' already exists`);
+            this._setStatus(`A layout with ID '${id}' already exists.`, true);
+            this._idEntry.grab_key_focus();
             return;
         }
 
@@ -934,6 +1099,15 @@ export class LayoutEditor {
             }
         }
         this._signalIds = [];
+
+        if (this._backdrop) {
+            if (this._backdropClickId) {
+                try { this._backdrop.disconnect(this._backdropClickId); } catch (_e) {}
+                this._backdropClickId = 0;
+            }
+            this._backdrop.destroy();
+            this._backdrop = null;
+        }
 
         if (this._container) {
             this._container.destroy();

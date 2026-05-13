@@ -145,10 +145,24 @@ export class KeybindingManager {
      * @param {Function} callback - Handler function
      */
     _registerKeybinding(name, callback) {
+        // Main.wm.addKeybinding looks the key up in the schema and will fault
+        // gnome-shell if it's missing. Verify first and pass the raw
+        // Gio.Settings (SafeSettings exposes it via `.gsettings`).
+        const hasKey = typeof this._settings.hasKey === 'function'
+            ? this._settings.hasKey(name)
+            : (this._settings.settings_schema?.has_key(name) ?? false);
+
+        if (!hasKey) {
+            this._logger.warn('Skipping keybinding: schema key missing', { name });
+            return;
+        }
+
+        const rawSettings = this._settings.gsettings || this._settings;
+
         try {
             Main.wm.addKeybinding(
                 name,
-                this._settings,
+                rawSettings,
                 KEYBINDING_FLAGS,
                 KEYBINDING_MODE,
                 callback

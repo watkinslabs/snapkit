@@ -374,5 +374,17 @@
       <description>Internal flag used to avoid re-running Turtle settings migration</description>
     </key>
 
+    <key name="pending-layout-edit" type="s">
+      <default>''</default>
+      <summary>Pending layout-editor request</summary>
+      <description>Cross-process trigger written by the prefs window. Shell observes the change, opens the in-shell layout editor accordingly, and clears the value back to empty. JSON: {"action":"create"|"edit"|"clone","layoutId":"..."}</description>
+    </key>
+
+    <key name="disabled-layouts" type="as">
+      <default>[]</default>
+      <summary>Disabled layouts</summary>
+      <description>Layout IDs (built-in or custom) that are hidden from the picker bar at runtime.</description>
+    </key>
+
   </schema>
 </schemalist>
