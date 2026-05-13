@@ -124,7 +124,7 @@ make clean            # Remove build artifacts
 
 `make dev` is the safe way to iterate. It stages the extension into an isolated `XDG_DATA_HOME` under `build/dev-home/` (your live install is never overwritten mid-edit), launches a nested gnome-shell, and patches the nested session bus's activation environment so the prefs window opens inside the nested compositor instead of escaping to your real desktop.
 
-The nested-shell resolution defaults to `1536x832`. Override per run:
+The nested-shell resolution defaults to `2000x900`. Override per run:
 
 ```bash
 make dev DEV_RESOLUTION=1920x1080
