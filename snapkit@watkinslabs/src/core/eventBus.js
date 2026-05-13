@@ -10,10 +10,10 @@ const logger = new Logger('EventBus');
  *
  * @example
  * const bus = new EventBus();
- * const unsubscribe = bus.on('zone-selected', data => {
+ * const unsubscribe = bus.on('layout-switched', data => {
  *     // handle event data
  * });
- * bus.emit('zone-selected', { zoneIndex: 3 });
+ * bus.emit('layout-switched', { layoutId: 'grid-2x2', monitorIndex: 0 });
  * unsubscribe();
  */
 export class EventBus {

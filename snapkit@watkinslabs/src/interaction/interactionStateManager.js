@@ -151,18 +151,6 @@ export class InteractionStateManager {
         );
 
         this._subscriptions.push(
-            this._eventBus.on('keyboard-select-zone', () => {
-                this._onKeyboardSelectZone();
-            })
-        );
-
-        this._subscriptions.push(
-            this._eventBus.on('keyboard-direct-select', (data) => {
-                this._onKeyboardDirectSelect(data);
-            })
-        );
-
-        this._subscriptions.push(
             this._eventBus.on('keyboard-cancel-drag', () => {
                 this._onKeyboardCancelDrag();
             })
@@ -527,28 +515,6 @@ export class InteractionStateManager {
 
         // Forward to overlay
         this._eventBus.emit('request-zone-navigation', { direction });
-    }
-
-    /**
-     * Handle keyboard zone selection
-     * @private
-     */
-    _onKeyboardSelectZone() {
-        this._logger.debug('Select zone via keyboard');
-        this._eventBus.emit('request-zone-select', {});
-    }
-
-    /**
-     * Handle keyboard direct selection
-     * @private
-     * @param {Object} data
-     */
-    _onKeyboardDirectSelect(data) {
-        const { zoneIndex } = data;
-
-        this._logger.debug('Direct zone selection via keyboard', { zoneIndex });
-
-        this._eventBus.emit('request-direct-zone-select', { zoneIndex });
     }
 
     /**

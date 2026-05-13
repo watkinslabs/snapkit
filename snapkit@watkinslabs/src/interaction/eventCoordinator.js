@@ -234,10 +234,6 @@ export class EventCoordinator {
             case State.DRAG_MODE:
                 // Drag mode, enable drag tracking
                 break;
-
-            case State.SELECT_WINDOW:
-                // Window selection, may need different input handling
-                break;
         }
     }
 

@@ -13,7 +13,7 @@ ZIP_NAME = $(EXTENSION_UUID).v$(VERSION).shell-extension.zip
 
 # Extension files to install/package
 FILES = extension.js prefs.js metadata.json
-DIRS = src schemas prefs-ui
+DIRS = src schemas
 
 # Colors for output
 C_RED    := \033[0;31m

@@ -48,34 +48,8 @@ export function wireEventHandlers(controller) {
     );
 
     controller._eventSubscriptions.push(
-        controller._eventBus.on('request-zone-select', () => {
-            controller._handleZoneSelect();
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('request-direct-zone-select', data => {
-            controller._handleDirectZoneSelect(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
         controller._eventBus.on('cancel-snap-preview', data => {
             controller._handleCancelSnapPreview(data);
-        })
-    );
-
-    // Zone selection from overlay
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('zone-selected', data => {
-            controller._handleZoneSelected(data);
-        })
-    );
-
-    // Window selection
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('window-selected', data => {
-            controller._handleWindowSelected(data);
         })
     );
 
@@ -83,25 +57,6 @@ export function wireEventHandlers(controller) {
     controller._eventSubscriptions.push(
         controller._eventBus.on('layout-switched', data => {
             controller._handleLayoutSwitched(data);
-        })
-    );
-
-    // Settings changes
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('appearance-settings-changed', data => {
-            controller._handleAppearanceSettings(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('behavior-settings-changed', data => {
-            controller._handleBehaviorSettings(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layout-settings-changed', data => {
-            controller._handleLayoutSettings(data);
         })
     );
 
@@ -143,48 +98,10 @@ export function wireEventHandlers(controller) {
         })
     );
 
-    // Custom layout management events
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layout-created', data => {
-            controller._handleLayoutCreated(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layout-updated', data => {
-            controller._handleLayoutUpdated(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layout-deleted', data => {
-            controller._handleLayoutDeleted(data);
-        })
-    );
-
     // Divider override events (save when changed)
     controller._eventSubscriptions.push(
         controller._eventBus.on('divider-moved', data => {
             controller._handleDividerMoved(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layouts-import-requested', () => {
-            controller._handleImportLayouts();
-        })
-    );
-
-    // Layout editor events
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layout-editor-create', data => {
-            controller._handleLayoutEditorCreate(data);
-        })
-    );
-
-    controller._eventSubscriptions.push(
-        controller._eventBus.on('layout-editor-update', data => {
-            controller._handleLayoutEditorUpdate(data);
         })
     );
 

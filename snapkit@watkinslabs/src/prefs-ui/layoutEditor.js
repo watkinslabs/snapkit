@@ -13,9 +13,9 @@ import Gdk from 'gi://Gdk';
 import Pango from 'gi://Pango';
 import PangoCairo from 'gi://PangoCairo';
 
-import { LayoutTree } from '../src/btree/tree/layoutTree.js';
-import { LayoutResolver } from '../src/btree/resolver/layoutResolver.js';
-import { LayoutManager } from '../src/btree/manager/layoutManager.js';
+import { LayoutTree } from '../btree/tree/layoutTree.js';
+import { LayoutResolver } from '../btree/resolver/layoutResolver.js';
+import { LayoutManager } from '../btree/manager/layoutManager.js';
 
 const CANVAS_W = 380;
 const CANVAS_H = 260;

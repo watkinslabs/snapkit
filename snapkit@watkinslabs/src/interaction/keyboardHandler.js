@@ -89,7 +89,6 @@ export class KeyboardHandler {
                     return this._handleClosedState(keyName, symbol, modifiers);
 
                 case State.OPEN:
-                case State.SELECT_WINDOW:
                     return this._handleOpenState(keyName, symbol, modifiers);
 
                 case State.DRAG_MODE:
@@ -124,12 +123,8 @@ export class KeyboardHandler {
     }
 
     /**
-     * Handle key press in OPEN or SELECT_WINDOW state
+     * Handle key press in OPEN state.
      * @private
-     * @param {string} keyName
-     * @param {number} symbol
-     * @param {Clutter.ModifierType} modifiers
-     * @returns {boolean}
      */
     _handleOpenState(keyName, symbol, modifiers) {
         // Cancel/close
@@ -139,46 +134,27 @@ export class KeyboardHandler {
             return Clutter.EVENT_STOP;
         }
 
-        // Select zone
-        if (this._matchesKey(symbol, this._config.selectZone)) {
-            this._logger.debug('Select zone pressed');
-            this._eventBus.emit('keyboard-select-zone', {});
-            return Clutter.EVENT_STOP;
-        }
-
         // Navigate up
         if (this._matchesKey(symbol, this._config.navigateUp)) {
-            this._logger.debug('Navigate up pressed');
             this._eventBus.emit('keyboard-navigate', { direction: 'up' });
             return Clutter.EVENT_STOP;
         }
 
         // Navigate down
         if (this._matchesKey(symbol, this._config.navigateDown)) {
-            this._logger.debug('Navigate down pressed');
             this._eventBus.emit('keyboard-navigate', { direction: 'down' });
             return Clutter.EVENT_STOP;
         }
 
         // Navigate left
         if (this._matchesKey(symbol, this._config.navigateLeft)) {
-            this._logger.debug('Navigate left pressed');
             this._eventBus.emit('keyboard-navigate', { direction: 'left' });
             return Clutter.EVENT_STOP;
         }
 
         // Navigate right
         if (this._matchesKey(symbol, this._config.navigateRight)) {
-            this._logger.debug('Navigate right pressed');
             this._eventBus.emit('keyboard-navigate', { direction: 'right' });
-            return Clutter.EVENT_STOP;
-        }
-
-        // Number keys for direct zone selection (1-9)
-        if (symbol >= Clutter.KEY_1 && symbol <= Clutter.KEY_9) {
-            const zoneIndex = symbol - Clutter.KEY_1; // 0-based
-            this._logger.debug('Direct zone selection', { zoneIndex });
-            this._eventBus.emit('keyboard-direct-select', { zoneIndex });
             return Clutter.EVENT_STOP;
         }
 

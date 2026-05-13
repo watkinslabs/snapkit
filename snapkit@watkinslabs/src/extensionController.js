@@ -824,13 +824,6 @@ export class ExtensionController {
                 extensionState.transitionTo(State.CLOSED);
                 break;
 
-            case State.SELECT_WINDOW:
-                // Cancel window selection
-                const windowSelector = this._serviceContainer.get('windowSelector');
-                windowSelector.cancel();
-                extensionState.transitionTo(State.CLOSED);
-                break;
-
             case State.DRAG_MODE:
                 // Already handled by drag detector
                 break;
@@ -843,101 +836,10 @@ export class ExtensionController {
      * @param {Object} data
      */
     _handleZoneNavigation(data) {
-        const { direction } = data;
-        const layoutOverlay = this._serviceContainer.get('layoutOverlay');
-
-        // Forward navigation to overlay
-        // In a full implementation, layoutOverlay would handle this
-        this._logger.debug('Zone navigation', { direction });
-    }
-
-    /**
-     * Handle zone select
-     * @private
-     */
-    _handleZoneSelect() {
-        const extensionState = this._serviceContainer.get('extensionState');
-        const layoutOverlay = this._serviceContainer.get('layoutOverlay');
-
-        // Get current zone from overlay (simplified)
-        // In full implementation, would get selected zone index
-
-        // Transition to SELECT_WINDOW state
-        extensionState.transitionTo(State.SELECT_WINDOW);
-
-        // Show window selector
-        const windowSelector = this._serviceContainer.get('windowSelector');
-        windowSelector.show();
-
-        this._logger.debug('Zone selected, showing window selector');
-    }
-
-    /**
-     * Handle direct zone select
-     * @private
-     * @param {Object} data
-     */
-    _handleDirectZoneSelect(data) {
-        const { zoneIndex } = data;
-
-        // Similar to zone select but with specific zone
-        this._handleZoneSelect();
-
-        this._logger.debug('Direct zone selected', { zoneIndex });
-    }
-
-    /**
-     * Handle zone selected from overlay
-     * @private
-     * @param {Object} data
-     */
-    _handleZoneSelected(data) {
-        const { zoneIndex } = data;
-
-        // Transition to window selection
-        this._handleZoneSelect();
-    }
-
-    /**
-     * Handle window selected
-     * @private
-     * @param {Object} data
-     */
-    _handleWindowSelected(data) {
-        const { window } = data;
-        const extensionState = this._serviceContainer.get('extensionState');
-        const interactiveSelectState = this._serviceContainer.get('interactiveSelectState');
-
-        // Get zone from interactive select state
-        const zoneIndex = interactiveSelectState.getSelectedZone();
-        const monitorIndex = interactiveSelectState.getMonitor();
-        const layoutId = interactiveSelectState.getLayoutId();
-
-        if (zoneIndex === null || monitorIndex === null || layoutId === null) {
-            this._logger.warn('Invalid interactive select state');
-            extensionState.transitionTo(State.CLOSED);
-            return;
-        }
-
-        // Get layout
-        const layoutManager = this._serviceContainer.get('layoutManager');
-        const layout = layoutManager.getLayout(layoutId);
-
-        if (!layout) {
-            extensionState.transitionTo(State.CLOSED);
-            return;
-        }
-
-        // Snap window
-        const snapHandler = this._serviceContainer.get('snapHandler');
-        snapHandler.snapToZone(window, monitorIndex, layoutId, zoneIndex, layout);
-
-        // Close overlay and transition to CLOSED
-        const layoutOverlay = this._serviceContainer.get('layoutOverlay');
-        layoutOverlay.hide();
-        extensionState.transitionTo(State.CLOSED);
-
-        this._logger.debug('Window selected and snapped', { zoneIndex });
+        // The overlay-based keyboard zone navigation flow was removed; the
+        // picker bar now handles its own keyboard navigation. This stub
+        // remains so the wired event still has somewhere to land.
+        this._logger.debug('Zone navigation', data);
     }
 
     /**
@@ -1516,36 +1418,6 @@ export class ExtensionController {
     }
 
     /**
-     * Handle layout created
-     * @private
-     * @param {Object} data - {layoutId, layoutDef}
-     */
-    _handleLayoutCreated(data) {
-        this._logger.info('Layout created', { layoutId: data.layoutId });
-        this.saveCustomLayouts();
-    }
-
-    /**
-     * Handle layout updated
-     * @private
-     * @param {Object} data - {layoutId, layoutDef}
-     */
-    _handleLayoutUpdated(data) {
-        this._logger.info('Layout updated', { layoutId: data.layoutId });
-        this.saveCustomLayouts();
-    }
-
-    /**
-     * Handle layout deleted
-     * @private
-     * @param {Object} data - {layoutId}
-     */
-    _handleLayoutDeleted(data) {
-        this._logger.info('Layout deleted', { layoutId: data.layoutId });
-        this.saveCustomLayouts();
-    }
-
-    /**
      * Handle divider moved
      * @private
      * @param {Object} data - {layoutId, monitorIndex, path, ratio}
@@ -1555,117 +1427,6 @@ export class ExtensionController {
         // Save overrides (debounced in real implementation)
         this.saveDividerOverrides();
         this._saveLayoutState();
-    }
-
-    /**
-     * Handle import layouts request
-     * @private
-     */
-    _handleImportLayouts() {
-        this._logger.info('Import layouts requested');
-        // In a real implementation, this would open a file chooser dialog
-    }
-
-    /**
-     * Handle layout editor create
-     * @private
-     * @param {Object} data - {layoutId, layoutDef}
-     */
-    _handleLayoutEditorCreate(data) {
-        const { layoutId, layoutDef } = data;
-        const layoutManager = this._serviceContainer.get('layoutManager');
-
-        // Register the new layout
-        const success = layoutManager.registerLayout(layoutId, layoutDef);
-        if (success) {
-            this._logger.info('Layout created via editor', { layoutId });
-            // Emit event for UI updates
-            this._eventBus.emit('layout-created', { layoutId, layoutDef });
-            // Save to GSettings
-            this.saveCustomLayouts();
-        } else {
-            this._logger.error('Failed to create layout', { layoutId });
-        }
-    }
-
-    /**
-     * Handle layout editor update
-     * @private
-     * @param {Object} data - {layoutId, layoutDef}
-     */
-    _handleLayoutEditorUpdate(data) {
-        const { layoutId, layoutDef } = data;
-        const layoutManager = this._serviceContainer.get('layoutManager');
-
-        // Update the layout
-        const success = layoutManager.updateLayout(layoutId, layoutDef);
-        if (success) {
-            this._logger.info('Layout updated via editor', { layoutId });
-            // Emit event for UI updates
-            this._eventBus.emit('layout-updated', { layoutId, layoutDef });
-            // Save to GSettings
-            this.saveCustomLayouts();
-        } else {
-            this._logger.error('Failed to update layout', { layoutId });
-        }
-    }
-
-    /**
-     * Handle appearance settings changed
-     * @private
-     * @param {Object} data
-     */
-    _handleAppearanceSettings(data) {
-        const settings = data?.settings || {};
-        const layoutPickerBar = this._serviceContainer.get('layoutPickerBar');
-        const mouseHandler = this._serviceContainer.get('mouseHandler');
-        const zoneColor = settings.zoneColor ?? settings.zoneBgColor;
-        const zoneHighlightColor = settings.zoneHoverColor ??
-            settings.zoneBorderHoverColor ??
-            settings.zoneHighlightColor;
-        const animationDuration = settings.animationDuration ?? settings.animationSpeed;
-
-        // Apply appearance settings to layout picker bar
-        layoutPickerBar.updateConfig({
-            backgroundColor: settings.overlayBackgroundColor,
-            borderRadius: settings.overlayBorderRadius,
-            zoneColor,
-            zoneHoverColor: zoneHighlightColor,
-            zoneBorderColor: settings.zoneBorderColor,
-            zoneBorderHoverColor: zoneHighlightColor,
-            textColor: settings.textColor,
-            activeLayoutBorderColor: settings.activeLayoutBorderColor,
-            activeLayoutTextColor: settings.activeLayoutTextColor,
-            thumbnailWidth: settings.thumbnailWidth,
-            thumbnailHeight: settings.thumbnailHeight,
-            animationDuration
-        });
-
-        // Keep edge hitbox span aligned with template sizing updates.
-        mouseHandler.updateConfig({
-            thumbnailWidth: settings.thumbnailWidth,
-            thumbnailHeight: settings.thumbnailHeight
-        });
-
-        this._logger.info('Appearance settings applied', settings);
-
-        // Save to GSettings
-        this._saveSettings('appearance', settings);
-    }
-
-    /**
-     * Handle behavior settings changed
-     * @private
-     * @param {Object} data
-     */
-    _handleBehaviorSettings(data) {
-        const settings = data?.settings || {};
-        this._applyBehaviorSettings(settings);
-
-        this._logger.info('Behavior settings applied', settings);
-
-        // Save to GSettings
-        this._saveSettings('behavior', settings);
     }
 
     /**
@@ -1727,23 +1488,6 @@ export class ExtensionController {
     }
 
     /**
-     * Handle layout settings changed
-     * @private
-     * @param {Object} data
-     */
-    _handleLayoutSettings(data) {
-        const { settings } = data;
-
-        // Apply layout settings
-        // perMonitorLayouts, defaultLayout, etc.
-
-        this._logger.info('Layout settings applied', settings);
-
-        // Save to GSettings
-        this._saveSettings('layout', settings);
-    }
-
-    /**
      * Load settings from GSettings
      * @private
      */
@@ -1769,9 +1513,6 @@ export class ExtensionController {
             // Load behavior settings
             this._loadBehaviorSettingsFromGSettings();
             this._watchBehaviorSettings();
-
-            // Bridge from the Gtk prefs window to the shell-side editor.
-            this._watchPendingEditorRequest();
 
             // Picker filtering — disabled layouts must actually disappear.
             this._applyDisabledLayouts();
@@ -2002,98 +1743,6 @@ export class ExtensionController {
             });
         } catch (error) {
             this._logger.error('Failed to load behavior settings', { error });
-        }
-    }
-
-    /**
-     * Cross-process bridge: the Gtk prefs window writes a JSON request to
-     * `pending-layout-edit`; we open the in-shell editor accordingly and
-     * clear the value so the same request doesn't fire twice.
-     * @private
-     */
-    _watchPendingEditorRequest() {
-        if (!this._settings || !this._hasSettingsKey('pending-layout-edit')) {
-            return;
-        }
-
-        const signalId = this._settings.connect('changed::pending-layout-edit', () => {
-            this._processPendingEditorRequest();
-        });
-        this._settingsSignalIds.push(signalId);
-
-        // Drain any request that was set while the shell was disabled.
-        this._processPendingEditorRequest();
-    }
-
-    /**
-     * @private
-     */
-    _processPendingEditorRequest() {
-        let raw = '';
-        try {
-            raw = this._settings.get_string('pending-layout-edit');
-        } catch (_error) {
-            return;
-        }
-        if (!raw) {
-            return;
-        }
-
-        let request = null;
-        try {
-            request = JSON.parse(raw);
-        } catch (error) {
-            this._logger.warn('Bad pending-layout-edit JSON', { raw, error: String(error) });
-            this._clearPendingEditorRequest();
-            return;
-        }
-
-        try {
-            const editor = this._serviceContainer?.get('layoutEditor');
-            const layoutManager = this._serviceContainer?.get('layoutManager');
-            if (!editor || !layoutManager) {
-                this._logger.warn('Editor or LayoutManager unavailable for editor request');
-                return;
-            }
-
-            const action = request.action;
-            const layoutId = request.layoutId;
-
-            if (action === 'create') {
-                editor.show({});
-            } else if (action === 'edit' || action === 'clone') {
-                const layoutDef = layoutManager.getLayout(layoutId);
-                if (!layoutDef) {
-                    this._logger.warn('Layout not found for editor request', { layoutId, action });
-                    return;
-                }
-                editor.show({
-                    layout: layoutDef.layout,
-                    layoutId: action === 'edit' ? layoutDef.id : null,
-                    name: layoutDef.name || layoutDef.id,
-                    description: layoutDef.description || '',
-                    margin: layoutDef.margin || 0,
-                    padding: layoutDef.padding || 4,
-                    isClone: action === 'clone'
-                });
-            } else {
-                this._logger.warn('Unknown editor request action', { action });
-            }
-        } catch (error) {
-            this._logger.error('Failed to handle pending-layout-edit', { error });
-        } finally {
-            this._clearPendingEditorRequest();
-        }
-    }
-
-    /**
-     * @private
-     */
-    _clearPendingEditorRequest() {
-        try {
-            this._settings.set_string('pending-layout-edit', '');
-        } catch (_error) {
-            // SafeSettings already short-circuits on missing key; ignore.
         }
     }
 

@@ -11,7 +11,7 @@ import Gio from 'gi://Gio';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import { LayoutManager } from './src/btree/manager/layoutManager.js';
-import { openLayoutEditor } from './prefs-ui/layoutEditor.js';
+import { openLayoutEditor } from './src/prefs-ui/layoutEditor.js';
 
 export default class SnapKitPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -325,8 +325,6 @@ export default class SnapKitPreferences extends ExtensionPreferences {
     }
 
     _requestEditor(settings, payload) {
-        // Open the in-process Adw editor. Direct call beats the pending-layout-edit
-        // GSettings round-trip and gives us a real modal transient on the prefs window.
         try {
             openLayoutEditor(this._window, settings, {
                 mode: payload.action,            // 'create' | 'edit' | 'clone'

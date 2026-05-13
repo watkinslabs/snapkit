@@ -8,14 +8,12 @@ const logger = new Logger('ExtensionState');
  *
  * States (see docs/TERMINOLOGY.md):
  * - CLOSED: Overlay not visible, normal operation
- * - OPEN: Overlay showing, user selecting zone
- * - SELECT_WINDOW: Zone selected, choosing which window to snap
+ * - OPEN: Picker bar showing, user selecting layout/zone
  * - DRAG_MODE: User dragging window, snap preview showing
  */
 export const State = {
     CLOSED: 'CLOSED',
     OPEN: 'OPEN',
-    SELECT_WINDOW: 'SELECT_WINDOW',
     DRAG_MODE: 'DRAG_MODE'
 };
 
@@ -24,8 +22,7 @@ export const State = {
  */
 const VALID_TRANSITIONS = {
     [State.CLOSED]: [State.OPEN, State.DRAG_MODE],
-    [State.OPEN]: [State.CLOSED, State.SELECT_WINDOW],
-    [State.SELECT_WINDOW]: [State.OPEN, State.CLOSED],
+    [State.OPEN]: [State.CLOSED],
     [State.DRAG_MODE]: [State.CLOSED]
 };
 
@@ -80,15 +77,6 @@ export class ExtensionState extends BaseState {
      */
     get isOpen() {
         return this._state === State.OPEN;
-    }
-
-    /**
-     * Check if in SELECT_WINDOW state
-     *
-     * @returns {boolean}
-     */
-    get isSelectingWindow() {
-        return this._state === State.SELECT_WINDOW;
     }
 
     /**

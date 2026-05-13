@@ -1,6 +1,5 @@
 import { ExtensionState } from '../state/extensionState.js';
 import { DragState } from '../state/dragState.js';
-import { InteractiveSelectState } from '../state/interactiveSelectState.js';
 import { LayoutState } from '../state/layoutState.js';
 
 import { LayoutValidator } from '../btree/validator/layoutValidator.js';
@@ -14,9 +13,7 @@ import { SnapHandler } from '../tiling/snapHandler.js';
 import { TileManager } from '../tiling/tileManager.js';
 import { DividerSyncManager } from '../tiling/dividerSyncManager.js';
 
-import { LayoutOverlay } from '../overlay/layoutOverlay.js';
 import { SnapPreviewOverlay } from '../overlay/snapPreviewOverlay.js';
-import { ZonePositioningOverlay } from '../overlay/zonePositioningOverlay.js';
 
 import { EventCoordinator } from '../interaction/eventCoordinator.js';
 import { MouseHandler } from '../interaction/mouseHandler.js';
@@ -24,13 +21,7 @@ import { DragDetector } from '../interaction/dragDetector.js';
 import { KeyboardHandler } from '../interaction/keyboardHandler.js';
 import { InteractionStateManager } from '../interaction/interactionStateManager.js';
 
-import { WindowSelector } from '../ui/windowSelector.js';
-import { LayoutEditor } from '../ui/layoutEditor.js';
 import { LayoutPickerBar } from '../ui/layoutPickerBar.js';
-
-import { AppearancePreferences } from '../preferences/appearancePreferences.js';
-import { BehaviorPreferences } from '../preferences/behaviorPreferences.js';
-import { LayoutPreferences } from '../preferences/layoutPreferences.js';
 
 /**
  * Register all extension services in DI container.
@@ -47,7 +38,6 @@ export function registerServices(controller) {
     // State services
     sc.register('extensionState', () => new ExtensionState(sc.get('eventBus')), true);
     sc.register('dragState', () => new DragState(sc.get('eventBus')), true);
-    sc.register('interactiveSelectState', () => new InteractiveSelectState(sc.get('eventBus')), true);
     sc.register('layoutState', () => new LayoutState(sc.get('eventBus')), true);
 
     // BTree services
@@ -82,16 +72,7 @@ export function registerServices(controller) {
     ), true);
 
     // Overlay services
-    sc.register('layoutOverlay', () => new LayoutOverlay(
-        sc.get('eventBus'),
-        sc.get('layoutResolver'),
-        sc.get('monitorManager')
-    ), true);
     sc.register('snapPreviewOverlay', () => new SnapPreviewOverlay(
-        sc.get('layoutResolver'),
-        sc.get('monitorManager')
-    ), true);
-    sc.register('zonePositioningOverlay', () => new ZonePositioningOverlay(
         sc.get('layoutResolver'),
         sc.get('monitorManager')
     ), true);
@@ -129,26 +110,11 @@ export function registerServices(controller) {
     ), true);
 
     // UI services
-    sc.register('windowSelector', () => new WindowSelector(sc.get('eventBus')), true);
-    sc.register('layoutEditor', () => new LayoutEditor(
-        sc.get('layoutResolver'),
-        sc.get('layoutManager'),
-        sc.get('eventBus')
-    ), true);
     sc.register('layoutPickerBar', () => new LayoutPickerBar(
         sc.get('layoutManager'),
         sc.get('layoutResolver'),
         sc.get('monitorManager'),
         sc.get('snapHandler'),
-        sc.get('eventBus')
-    ), true);
-
-    // Preferences services
-    sc.register('appearancePreferences', () => new AppearancePreferences(sc.get('eventBus')), true);
-    sc.register('behaviorPreferences', () => new BehaviorPreferences(sc.get('eventBus')), true);
-    sc.register('layoutPreferences', () => new LayoutPreferences(
-        sc.get('layoutManager'),
-        sc.get('monitorManager'),
         sc.get('eventBus')
     ), true);
 
